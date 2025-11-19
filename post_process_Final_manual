@@ -1,0 +1,79 @@
+%% 5.1) Figure 1 — 전압/전류 vs time (yyaxis)
+f1 = figure(4101); clf; set(gcf,'Color','w'); hold on; grid off;
+title('Voltage & Current vs time (Optimal C)');
+
+yyaxis left;
+plot(R_cccv.t,  R_cccv.E,  '-',  'LineWidth',1.5, 'Color',blue);
+plot(R_mscc2.t, R_mscc2.E, '-',  'LineWidth',1.5, 'Color',purple);
+plot(R_mscc4.t, R_mscc4.E, '-',  'LineWidth',1.5, 'Color',red);
+ylabel('E_{cell} (V)');
+
+yyaxis right;
+plot(R_cccv.t,  R_cccv.I,  '--', 'LineWidth',1.2, 'Color',blue);
+plot(R_mscc2.t, R_mscc2.I, '--', 'LineWidth',1.2, 'Color',purple);
+plot(R_mscc4.t, R_mscc4.I, '--', 'LineWidth',1.2, 'Color',red);
+ylabel('I_{cell} (A)');
+
+xlabel('t (s)');
+legend({'E CCCV','E MSCC2','E MSCC4', ...
+        'I CCCV','I MSCC2','I MSCC4'}, ...
+        'Location','bestoutside');
+
+% 축 색을 모두 검정으로
+ax = gca;
+ax.XColor      = 'k';
+ax.YAxis(1).Color = 'k';
+ax.YAxis(2).Color = 'k';
+
+export_png(f1, fullfile(fig_out_dir, 'timeseries_voltage_current.png'));
+
+%% 5.2) Figure 2 — (liion.Ect) vs time
+f2 = figure(4102); clf; set(gcf,'Color','w'); hold on; grid off;
+plot(R_cccv.t,  R_cccv.vdiff,  'LineWidth',1.6, 'Color',blue);
+plot(R_mscc2.t, R_mscc2.vdiff, 'LineWidth',1.6, 'Color',purple);
+plot(R_mscc4.t, R_mscc4.vdiff, 'LineWidth',1.6, 'Color',red);
+xlabel('t (s)');
+ylabel('Anode potential (V)');
+title('Anode potential vs time (Optimal C)');
+legend({'CCCV','MSCC2','MSCC4'}, 'Location','best');
+
+ax = gca;
+ax.XColor = 'k';
+ax.YColor = 'k';
+
+export_png(f2, fullfile(fig_out_dir, 'timeseries_anode_potential.png'));
+
+%% 5.3) Figure 3 — T_{avg}, T_{max} vs time [°C]
+f3 = figure(4103); clf; set(gcf,'Color','w'); hold on; grid off;
+
+% 각 프로토콜 별 K -> °C 변환
+TavgC_cccv  = R_cccv.Tavg  - 273.15;
+TavgC_mscc2 = R_mscc2.Tavg - 273.15;
+TavgC_mscc4 = R_mscc4.Tavg - 273.15;
+
+TmaxC_cccv  = R_cccv.Tmax  - 273.15;
+TmaxC_mscc2 = R_mscc2.Tmax - 273.15;
+TmaxC_mscc4 = R_mscc4.Tmax - 273.15;
+
+% T_avg (°C)
+plot(R_cccv.t,  TavgC_cccv,  '-',  'LineWidth',1.6, 'Color',blue);
+plot(R_mscc2.t, TavgC_mscc2, '-',  'LineWidth',1.6, 'Color',purple);
+plot(R_mscc4.t, TavgC_mscc4, '-',  'LineWidth',1.6, 'Color',red);
+
+% T_max (°C)
+plot(R_cccv.t,  TmaxC_cccv,  '--', 'LineWidth',1.4, 'Color',blue);
+plot(R_mscc2.t, TmaxC_mscc2, '--', 'LineWidth',1.4, 'Color',purple);
+plot(R_mscc4.t, TmaxC_mscc4, '--', 'LineWidth',1.4, 'Color',red);
+
+xlabel('t (s)');
+ylabel('Temperature (°C)');
+title('Temperature vs time (Optimal C)');
+legend({'T_{avg} CCCV','T_{avg} MSCC2','T_{avg} MSCC4', ...
+        'T_{max} CCCV','T_{max} MSCC2','T_{max} MSCC4'}, ...
+        'Location','bestoutside');
+
+ax = gca;
+ax.XColor = 'k';
+ax.YColor = 'k';
+
+export_png(f3, fullfile(fig_out_dir, 'timeseries_temperature.png'));
