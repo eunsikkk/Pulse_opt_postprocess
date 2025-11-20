@@ -170,18 +170,22 @@ ModelUtil.showProgress(true);
 
 % 5.1) 최적해 요약 MAT 로드
 summary_mat = pick_one_file(run_dir, 'run_summary_*.mat');
+
 S = load(summary_mat);
 
-% --- 최적 C-rate ---
+%--- 최적 C-rate ---
 C_cccv  = S.optimal_C_rate;        % scalar
-%C_mscc2 = S.optimal_C_mscc2(:).';  % [C12 C3456]
-%C_mscc4 = S.optimal_C_mscc4(:).';  % [C1 C2 C34 C56]
+C_mscc2 = S.optimal_C_mscc2(:).';  % [C12 C3456]
+C_mscc4 = S.optimal_C_mscc4(:).';  % [C1 C2 C34 C56]
 
-% ==== 여기부터 수동 입력 ====
-C12_manual   = 7.9965;   % 예: 1,2 스텝 C-rate
-C3456_manual = 3.3870;   % 예: 3~6 스텝 C-rate
-C_mscc2 = [C12_manual, C3456_manual];   % [C12 C3456] 형식으로 유지
-% ============================
+% % ==== 여기부터 수동 입력 ====
+% C_cccv_manual = 3.5830;   % ★ 네가 쓰고 싶은 CCCV C-rate 값
+% C_cccv = C_cccv_manual;   % 아래 run_and_eval 에서 쓸 값
+% 
+% C12_manual   = 7.9965;   % 예: 1,2 스텝 C-rate
+% C3456_manual = 3.3870;   % 예: 3~6 스텝 C-rate
+% C_mscc2 = [C12_manual, C3456_manual];   % [C12 C3456] 형식으로 유지
+% % ============================
 
 % --- 각 프로토콜별 최적 충전 시간 [s] ---
 t_cccv  = S.cccv_min_t;
@@ -189,20 +193,11 @@ t_mscc2 = S.mscc2_min_t;
 t_mscc4 = S.mscc4_min_t;
 
 % 5.2) 모델 로드
-filepath = 'C:\Users\dsdsd\Downloads';
-filename = 'ES_MSCCPC_Final_1119_pulse.mph';
+filepath = 'G:\공유 드라이브\Battery Software Group (2025)\Members\최은식\COMSOL';
+filename = 'ES_MSCCPC_Final.mph';
 full_path = fullfile(filepath, filename);
 assert(isfile(full_path),'mph 파일 없음: %s', full_path);
 model = mphload(full_path);
-
-% === MSCC4 C-rate 를 COMSOL 모델 파라미터에서 읽기 ======================
-C1  = str2double(model.param.get('first_MSCC_Crate'));
-C2  = str2double(model.param.get('second_MSCC_Crate'));
-C34 = str2double(model.param.get('third_MSCC_Crate'));   % (= fourth)
-C56 = str2double(model.param.get('fifth_MSCC_Crate'));   % (= sixth)
-
-C_mscc4 = [C1, C2, C34, C56];   % run_and_eval 에서 쓰는 형식 [C1 C2 C34 C56]
-% ======================================================================
 
 % 5.4) 실행 (프로토콜당 1회 실행, tlist = range(0,10,t_cycling))
 fprintf('\n[SIM] Running CCCV...\n');
@@ -358,7 +353,7 @@ for k = 1:numel(PROT)
     % T_avg: 파란색 실선 (°C)
     plot(R.t, TavgC, '-',  'LineWidth',1.6, 'Color',blue);
     % T_max: 빨간색 점선 (°C)
-    plot(R.t, TmaxC, '--', 'LineWidth',1.4, 'Color',red);
+    plot(R.t, TmaxC, '-', 'LineWidth',1.4, 'Color',red);
 
     xlabel('t (s)');
     ylabel('Temperature (°C)');
@@ -610,7 +605,7 @@ function R = run_and_eval(protocol, model, Cvals, t_cycling)
     %   - t_cycling: run_summary 에서 읽어온 최적 충전시간 [s]
     %
     % 여기서 dt_out 은 COMSOL Output times 의 두 번째 인자에 해당 (예: range(0,10,t_cycling))
-    dt_out = 5;   % [s]
+    dt_out = 10;   % [s]
 
     % ===== (1) 파라미터 세팅 & 스터디/데이터셋 선택 =====
     switch protocol
@@ -618,6 +613,7 @@ function R = run_and_eval(protocol, model, Cvals, t_cycling)
             model.param.set('C_rate', num2str(Cvals(1)));
             studyTag = 'std1'; dset = 'dset1';
 
+           
         case 'MSCC2'   % [C12 C3456]
             C12    = Cvals(1);
             C3456  = Cvals(2);
@@ -627,6 +623,9 @@ function R = run_and_eval(protocol, model, Cvals, t_cycling)
             model.param.set('fourth_MSCC_Crate', num2str(C3456));
             model.param.set('fifth_MSCC_Crate',  num2str(C3456));
             model.param.set('sixth_MSCC_Crate',  num2str(C3456));
+
+            
+
             studyTag = 'std2'; dset = 'dset3';
 
         case 'MSCC4'   % [C1 C2 C34 C56]
@@ -637,6 +636,9 @@ function R = run_and_eval(protocol, model, Cvals, t_cycling)
             model.param.set('fourth_MSCC_Crate', num2str(C34));
             model.param.set('fifth_MSCC_Crate',  num2str(C56));
             model.param.set('sixth_MSCC_Crate',  num2str(C56));
+
+            model.param.set('pulse_stage_mode', '0');
+
             studyTag = 'std2'; dset = 'dset3';
 
         otherwise
