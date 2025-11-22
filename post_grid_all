@@ -53,22 +53,19 @@ end
 stage_list = setdiff(unique(stage_all), 0);
 fprintf('\n총 stage_mode (0 제외): '); disp(stage_list');
 
+%% Irest 선택 (원하면 [-1 0 1] 같은 식으로 바꿔서 사용)
+%Irest_list = unique(Irest_all);  % 예: -1,0,1 전체 사용
+Irest_list = 0;                   % 지금은 Irest = 0만 사용
+
 fig_id = 1;
 
-% === 각 stage_mode별 peak 정보 저장용 ===
-PEAKS = struct('stage',{},'duty',{},'Tper',{},'dplat',{}, ...
-               'Irest',{},'kind',{},'tcharge',{});
+% === 각 (stage, Irest)별 peak 정보 저장용 ===
+PEAKS = struct('stage',{},'Irest',{},'duty',{},'Tper',{}, ...
+               'dplat',{},'kind',{},'tcharge',{});
 
 %% =========================================================================
 % 2) stage_mode = 1~7, Irest 별로 모든 모드 반복
 % =========================================================================
-stage_list = setdiff(unique(stage_all), 0);   % 0 = baseline 제외
-%Irest_list = unique(Irest_all);               % 예: -1, 0, 1
-Irest_list = 0; 
-fig_id = 1;
-PEAKS = struct('stage',{},'Irest',{},'duty',{},'Tper',{}, ...
-               'dplat',{},'kind',{},'tcharge',{});
-
 for mode_target = stage_list'
 
     for Ival = Irest_list'
@@ -124,12 +121,12 @@ for mode_target = stage_list'
             continue;
         end
 
-        % best: Δplating 최소 2개
+        % best: Δplating 최소 2개 ( = plating 감소가 가장 좋은 지점 )
         [~, sort_asc] = sort(Zv, 'ascend');
         nb = min(2, numel(Zv));
         best_idx = sort_asc(1:nb);
 
-        % worst: Δplating 최대 2개
+        % worst: Δplating 최대 2개 ( = plating 증가가 가장 나쁜 지점 )
         [~, sort_desc] = sort(Zv, 'descend');
         nw = min(2, numel(Zv));
         worst_idx = sort_desc(1:nw);
@@ -227,6 +224,7 @@ for mode_target = stage_list'
         colorbar;
         hold on;
 
+        % Best / Worst는 단순 분류용이니까 여기 색은 그대로 둬도 됨
         hBest  = scatter(Dv(best_idx),  Pv(best_idx), 80, 'g', 'filled', ...
             'MarkerEdgeColor','k', 'DisplayName','Best (low \DeltaPlating)');
         hWorst = scatter(Dv(worst_idx), Pv(worst_idx), 60, 'r', 'filled', ...
@@ -250,7 +248,6 @@ for mode_target = stage_list'
 end % stage loop
 
 fprintf('\n총 PEAKS 개수: %d\n', numel(PEAKS));
-
 
 
 %% =========================================================================
@@ -316,15 +313,15 @@ ts = datestr(now,'yyyymmdd_HHMMSS');
 fig_out_dir = fullfile(fig_base_dir, ['pulse_bestworst_ALL_' ts]);
 if ~isfolder(fig_out_dir), mkdir(fig_out_dir); end
 
-% 팔레트 색상 (RGB)
-colTavg = [0,115,194]/255;   % #0073C2
-colTmax = [205,83,76]/255;   % #CD534C
-colV    = [32,133,78]/255;   % #20854E
-colI    = [225,135,39]/255;  % #E18727
-colAn   = [146,94,159]/255;  % #925E9F
-colPc   = [126,97,72]/255;   % #7E6148
-colGrey = [116,118,120]/255; % #747678
-colBlue = colTavg;           % #0073C2
+% 팔레트 색상 (네가 지정한 규칙)
+colTavg = [0,115,194]/255;   % 파랑 (T_avg)
+colTmax = [205,83,76]/255;   % 빨강 (T_max)
+colPc   = [0,0.6,0];         % 초록 (plating_cap)
+colV    = [0.929,0.694,0.125]; % 노랑 (V)
+colI    = [0,0.75,0.75];       % 시안 (I)
+colAn   = [146,94,159]/255;  % 보라 (anode potential)
+colGrey = [116,118,120]/255; % baseline용 회색
+colBlue = colTavg;           % bar plot에서 best용 파랑
 
 
 %% =========================================================================
@@ -460,6 +457,9 @@ for s = unique_stage
     % marker 찍는 인덱스 (너무 많으면 지저분하니까 샘플링)
     getMarkerIdx = @(n) round(linspace(1, n, min(12,n)));
 
+    % 안전한 LineStyle 보정 함수
+    fixLS = @(ls) iff(ismember(ls, {'-','--',':','-.','none'}), ls, '-');
+
     %% ---- 1) V, I vs time -----------------------------------------------
     f1s = figure; set(gcf,'Color','w'); hold on; grid off;
     title(sprintf('Stage %d: Voltage & Current vs time (best/worst)', s));
@@ -467,8 +467,9 @@ for s = unique_stage
     yyaxis left;
     for j = 1:Ns
         st = styles(j);
+        ls = fixLS(st.ls);
         h = plot(Rs(j).t, Rs(j).E, 'LineWidth',1.5, ...
-             'Color', colV, 'LineStyle', st.ls);
+             'Color', colV, 'LineStyle', ls);
         if ~isempty(st.mk)
             h.Marker = st.mk;
             h.MarkerIndices = getMarkerIdx(numel(Rs(j).t));
@@ -479,8 +480,9 @@ for s = unique_stage
     yyaxis right;
     for j = 1:Ns
         st = styles(j);
+        ls = fixLS(st.ls);
         h = plot(Rs(j).t, Rs(j).I, 'LineWidth',1.2, ...
-             'Color', colI, 'LineStyle', st.ls);
+             'Color', colI, 'LineStyle', ls);
         if ~isempty(st.mk)
             h.Marker = st.mk;
             h.MarkerIndices = getMarkerIdx(numel(Rs(j).t));
@@ -505,13 +507,14 @@ for s = unique_stage
 
     for j = 1:Ns
         st = styles(j);
+        ls = fixLS(st.ls);
         TavgC = Rs(j).Tavg - 273.15;
         TmaxC = Rs(j).Tmax - 273.15;
 
         h1 = plot(Rs(j).t, TavgC, 'LineWidth',1.6, ...
-              'Color', colTavg, 'LineStyle', st.ls);
+              'Color', colTavg, 'LineStyle', ls);
         h2 = plot(Rs(j).t, TmaxC, 'LineWidth',1.4, ...
-              'Color', colTmax, 'LineStyle', st.ls);
+              'Color', colTmax, 'LineStyle', ls);
         if ~isempty(st.mk)
             idxMk = getMarkerIdx(numel(Rs(j).t));
             h1.Marker = st.mk; h1.MarkerIndices = idxMk;
@@ -542,8 +545,9 @@ for s = unique_stage
 
     for j = 1:Ns
         st = styles(j);
+        ls = fixLS(st.ls);
         h = plot(Rs(j).t, Rs(j).vdiff, 'LineWidth',1.6, ...
-             'Color', colAn, 'LineStyle', st.ls);
+             'Color', colAn, 'LineStyle', ls);
         if ~isempty(st.mk)
             h.Marker = st.mk;
             h.MarkerIndices = getMarkerIdx(numel(Rs(j).t));
@@ -567,8 +571,9 @@ for s = unique_stage
 
     for j = 1:Ns
         st = styles(j);
+        ls = fixLS(st.ls);
         h = plot(Rs(j).t, Rs(j).pc, 'LineWidth',1.6, ...
-             'Color', colPc, 'LineStyle', st.ls);
+             'Color', colPc, 'LineStyle', ls);
         if ~isempty(st.mk)
             h.Marker = st.mk;
             h.MarkerIndices = getMarkerIdx(numel(Rs(j).t));
@@ -754,5 +759,13 @@ function col = toCol(D, k)
         col = D.(['d' num2str(k)]);
     catch
         col = nan(size(D.d1));
+    end
+end
+
+function out = iff(cond, a, b)
+    if cond
+        out = a;
+    else
+        out = b;
     end
 end
