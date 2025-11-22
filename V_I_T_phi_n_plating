@@ -458,7 +458,7 @@ for k = 1:numel(PROT)
 
     fP = figure(4600+k); clf;
     set(gcf,'Color','w');
-    grid on; hold on;
+    grid off; hold on;
 
     plot(R.t, R.pc, 'LineWidth',1.6, 'Color',colPc);
 
@@ -475,6 +475,41 @@ for k = 1:numel(PROT)
         sprintf('timeseries_platingcap_%s.png', P.name));
     export_png(fP, out_png);
 end
+%% 5.10) Charge time comparison — CCCV vs MSCC2 vs MSCC4 (from simulation)
+
+times  = [R_cccv.t(end); ...
+          R_mscc2.t(end); ...
+          R_mscc4.t(end)];
+
+labels = {'CCCV','MSCC2','MSCC4'};
+
+% 프로토콜 고정 팔레트 색상
+bar_colors = [colCCCV; colMSCC2; colMSCC4];
+
+fTcmp = figure(4800); clf;
+set(gcf,'Color','w');
+
+b = bar(times);
+b.FaceColor = 'flat';
+for i = 1:numel(times)
+    b.CData(i,:) = bar_colors(i,:);
+end
+
+grid off;
+xticks(1:3);
+xticklabels(labels);
+xlabel('Protocol');
+ylabel('Charge time (s)');
+title('Charge time comparison');
+
+ax = gca;
+ax.XColor = 'k';
+ax.YColor = 'k';
+set(ax,'FontSize',11);
+
+out_cmp = fullfile(fig_out_dir, 'charge_time_comparison_fromSim.png');
+export_png(fTcmp, out_cmp);
+fprintf('Saved: %s\n', out_cmp);
 
 %% ======================= Local helper functions ==========================
 function fpath = pick_one_file(folder, pattern)
