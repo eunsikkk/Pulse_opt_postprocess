@@ -34,8 +34,19 @@ if ismember('I_rest', T.Properties.VariableNames)
 elseif ismember('Irest', T.Properties.VariableNames)
     Irest_all = T.Irest;
 else
-    % 없으면 0으로 두고 진행
     Irest_all = zeros(height(T),1);
+end
+
+% 충전시간 컬럼 (가능한 이름들 체크)
+if ismember('t_charge', T.Properties.VariableNames)
+    tcharge_all = T.t_charge;
+elseif ismember('t_charge_s', T.Properties.VariableNames)
+    tcharge_all = T.t_charge_s;
+elseif ismember('tcharge', T.Properties.VariableNames)
+    tcharge_all = T.tcharge;
+else
+    tcharge_all = nan(height(T),1);
+    warning('t_charge 컬럼을 찾지 못했습니다. 나중 막대그래프에서 NaN이 나올 수 있습니다.');
 end
 
 % stage_mode 1~7만 사용 (0 = baseline 제외)
@@ -45,218 +56,207 @@ fprintf('\n총 stage_mode (0 제외): '); disp(stage_list');
 fig_id = 1;
 
 % === 각 stage_mode별 peak 정보 저장용 ===
-PEAKS = struct('stage',{},'duty',{},'Tper',{},'dplat',{},'Irest',{},'kind',{});
+PEAKS = struct('stage',{},'duty',{},'Tper',{},'dplat',{}, ...
+               'Irest',{},'kind',{},'tcharge',{});
 
 %% =========================================================================
-% 2) stage_mode = 1~7 모든 모드 반복
+% 2) stage_mode = 1~7, Irest 별로 모든 모드 반복
 % =========================================================================
+stage_list = setdiff(unique(stage_all), 0);   % 0 = baseline 제외
+%Irest_list = unique(Irest_all);               % 예: -1, 0, 1
+Irest_list = 0; 
+fig_id = 1;
+PEAKS = struct('stage',{},'Irest',{},'duty',{},'Tper',{}, ...
+               'dplat',{},'kind',{},'tcharge',{});
+
 for mode_target = stage_list'
 
-    fprintf('\n==============================================\n');
-    fprintf('>> stage_mode = %d 처리중...\n', mode_target);
-    fprintf('==============================================\n');
+    for Ival = Irest_list'
 
-    % 인덱싱
-    idx = (stage_all == mode_target);
+        % ------------ (stage, Irest) subset ------------
+        idx = (stage_all == mode_target) & (Irest_all == Ival);
 
-    duty  = duty_all(idx);
-    Tper  = Tper_all(idx);
-    dplat = dplat_all(idx);
+        duty  = duty_all(idx);
+        Tper  = Tper_all(idx);
+        dplat = dplat_all(idx);
+        tchg  = tcharge_all(idx);
 
-    fprintf('stage_mode = %d 데이터 개수: %d\n', ...
-            mode_target, sum(idx));
+        fprintf('\n==============================================\n');
+        fprintf('>> stage_mode = %d, Irest = %.0f 처리중...\n', mode_target, Ival);
+        fprintf('==============================================\n');
+        fprintf('데이터 개수: %d\n', numel(duty));
 
-    if isempty(duty)
-        warning('stage_mode %d 는 데이터가 없습니다. 스킵합니다.', mode_target);
-        continue;
-    end
-
-    %% =========================================================================
-    % 3) duty × Tper grid 구성
-    %% =========================================================================
-    duty_u = unique(duty);
-    Tper_u = unique(Tper);
-
-    [DUTY, TPER] = meshgrid(duty_u, Tper_u);
-
-    Z = nan(size(DUTY));
-    for i = 1:numel(duty)
-        rr = find(Tper_u == Tper(i));
-        cc = find(duty_u == duty(i));
-        Z(rr, cc) = dplat(i);
-    end
-
-    %% =========================================================================
-    % 3-1) 이 stage_mode 내에서 best 2 / worst 2 찾기
-    %% =========================================================================
-    Z_flat    = Z(:);
-    DUTY_flat = DUTY(:);
-    TPER_flat = TPER(:);
-
-    valid = ~isnan(Z_flat);
-    Zv = Z_flat(valid);
-    Dv = DUTY_flat(valid);
-    Pv = TPER_flat(valid);
-
-    % 데이터 포인트가 2개 미만이면 스킵
-    if numel(Zv) < 2
-        warning('stage_mode %d: 유효 Z 포인트가 2개 미만입니다. peak 계산 스킵.', mode_target);
-        continue;
-    end
-
-    % 가장 큰 2개
-    [~, sort_desc] = sort(Zv, 'descend');
-    nb = min(2, numel(Zv));
-    best_idx = sort_desc(1:nb);
-
-    % 가장 작은 2개
-    [~, sort_asc] = sort(Zv, 'ascend');
-    nw = min(2, numel(Zv));
-    worst_idx = sort_asc(1:nw);
-
-    % === 전체 테이블에서 이 포인트들에 해당하는 row 찾아서 I_rest까지 저장 ===
-    for ii = 1:nb
-        duty_val = Dv(best_idx(ii));
-        Tper_val = Pv(best_idx(ii));
-        dplat_val = Zv(best_idx(ii));
-
-        row = find(stage_all == mode_target & ...
-                   abs(duty_all - duty_val) < 1e-12 & ...
-                   abs(Tper_all - Tper_val) < 1e-12 & ...
-                   abs(dplat_all - dplat_val) < 1e-12, 1);
-        if isempty(row)
-            Irest_val = NaN;
-        else
-            Irest_val = Irest_all(row);
+        if isempty(duty)
+            warning('stage_mode %d, Irest %.0f 는 데이터가 없습니다. 스킵합니다.', ...
+                     mode_target, Ival);
+            continue;
         end
 
-        PEAKS(end+1) = struct( ...
-            'stage', mode_target, ...
-            'duty',  duty_val, ...
-            'Tper',  Tper_val, ...
-            'dplat', dplat_val, ...
-            'Irest', Irest_val, ...
-            'kind',  "best");
-    end
+        %% ----------------- 3) duty × Tper grid -----------------
+        duty_u = unique(duty);
+        Tper_u = unique(Tper);
 
-    for ii = 1:nw
-        duty_val = Dv(worst_idx(ii));
-        Tper_val = Pv(worst_idx(ii));
-        dplat_val = Zv(worst_idx(ii));
+        [DUTY, TPER] = meshgrid(duty_u, Tper_u);
 
-        row = find(stage_all == mode_target & ...
-                   abs(duty_all - duty_val) < 1e-12 & ...
-                   abs(Tper_all - Tper_val) < 1e-12 & ...
-                   abs(dplat_all - dplat_val) < 1e-12, 1);
-        if isempty(row)
-            Irest_val = NaN;
-        else
-            Irest_val = Irest_all(row);
+        Z     = nan(size(DUTY));
+        Ztchg = nan(size(DUTY));  % 필요하면 충전시간 grid도 만들 수 있음
+
+        for i = 1:numel(duty)
+            rr = find(Tper_u == Tper(i));
+            cc = find(duty_u == duty(i));
+            Z(rr,   cc) = dplat(i);
+            Ztchg(rr,cc) = tchg(i);
         end
 
-        PEAKS(end+1) = struct( ...
-            'stage', mode_target, ...
-            'duty',  duty_val, ...
-            'Tper',  Tper_val, ...
-            'dplat', dplat_val, ...
-            'Irest', Irest_val, ...
-            'kind',  "worst");
-    end
+        %% 3-1) 이 (stage, Irest) 내에서 best 2 / worst 2
+        Z_flat    = Z(:);
+        DUTY_flat = DUTY(:);
+        TPER_flat = TPER(:);
 
-       %% =========================================================================
-    % 4) 3D Surface Plot
-    %% =========================================================================
-    figure(fig_id); clf; set(gcf,'Color','w');
-    fig_id = fig_id + 1;
+        valid = ~isnan(Z_flat);
+        Zv = Z_flat(valid);
+        Dv = DUTY_flat(valid);
+        Pv = TPER_flat(valid);
 
-    surf(DUTY, TPER, Z, 'FaceAlpha',0.9);
-    shading interp;
-    colorbar;
+        if numel(Zv) < 2
+            warning('stage_mode %d, Irest %.0f: 유효 Z 포인트 < 2, peak 스킵.', ...
+                     mode_target, Ival);
+            continue;
+        end
 
-    xlabel('Duty');
-    ylabel('Pulse Period (s)');
-    zlabel('\DeltaPlating');
-    title(sprintf('MSCC4 Pulse Grid (stage mode = %d)', mode_target));
+        % best: Δplating 최소 2개
+        [~, sort_asc] = sort(Zv, 'ascend');
+        nb = min(2, numel(Zv));
+        best_idx = sort_asc(1:nb);
 
-    set(gca,'YScale','log');   % Tper log 스케일
-    set(gca,'FontSize',14);
+        % worst: Δplating 최대 2개
+        [~, sort_desc] = sort(Zv, 'descend');
+        nw = min(2, numel(Zv));
+        worst_idx = sort_desc(1:nw);
 
-    %% =========================================================================
-    % 5) 2D Heatmap (깨끗한 grid, 포인트 없음)
-    %% =========================================================================
-    figure(fig_id); clf; set(gcf,'Color','w');
-    fig_id = fig_id + 1;
+        % --- PEAKS에 저장 (stage + Irest 단위) ---
+        for ii = 1:nb
+            duty_val  = Dv(best_idx(ii));
+            Tper_val  = Pv(best_idx(ii));
+            dplat_val = Zv(best_idx(ii));
 
-    contourf(DUTY, TPER, Z, 40, 'LineColor','none');
-    colorbar;
+            row = find(stage_all == mode_target & ...
+                       abs(Irest_all - Ival)    < 1e-12 & ...
+                       abs(duty_all  - duty_val)< 1e-12 & ...
+                       abs(Tper_all  - Tper_val)< 1e-12 & ...
+                       abs(dplat_all - dplat_val)<1e-12, 1);
+            if isempty(row)
+                tcharge_val = NaN;
+            else
+                tcharge_val = tcharge_all(row);
+            end
 
-    xlabel('Duty');
-    ylabel('Pulse Period (s)');
-    title(sprintf('\\DeltaPlating Heatmap (clean, stage mode = %d)', mode_target));
+            PEAKS(end+1) = struct( ...
+                'stage',   mode_target, ...
+                'Irest',   Ival, ...
+                'duty',    duty_val, ...
+                'Tper',    Tper_val, ...
+                'dplat',   dplat_val, ...
+                'kind',    "best", ...
+                'tcharge', tcharge_val);
+        end
 
-    set(gca,'YScale','log');
-    set(gca,'FontSize',14);
+        for ii = 1:nw
+            duty_val  = Dv(worst_idx(ii));
+            Tper_val  = Pv(worst_idx(ii));
+            dplat_val = Zv(worst_idx(ii));
 
-        %% =========================================================================
-    % 6) 2D Heatmap (Contourf) + best/worst 포인트 표시
-    %% =========================================================================
-    figure(fig_id); clf; set(gcf,'Color','w');
-    fig_id = fig_id + 1;
+            row = find(stage_all == mode_target & ...
+                       abs(Irest_all - Ival)    < 1e-12 & ...
+                       abs(duty_all  - duty_val)< 1e-12 & ...
+                       abs(Tper_all  - Tper_val)< 1e-12 & ...
+                       abs(dplat_all - dplat_val)<1e-12, 1);
+            if isempty(row)
+                tcharge_val = NaN;
+            else
+                tcharge_val = tcharge_all(row);
+            end
 
-    contourf(DUTY, TPER, Z, 40, 'LineColor','none');
-    colorbar;
-    hold on;
+            PEAKS(end+1) = struct( ...
+                'stage',   mode_target, ...
+                'Irest',   Ival, ...
+                'duty',    duty_val, ...
+                'Tper',    Tper_val, ...
+                'dplat',   dplat_val, ...
+                'kind',    "worst", ...
+                'tcharge', tcharge_val);
+        end
 
-    % best / worst 포인트 overlay (핸들 저장)
-    hBest  = scatter(Dv(best_idx),  Pv(best_idx), 80, 'r', 'filled', ...
-        'MarkerEdgeColor','k', 'DisplayName','Top-2 peak');
-    hWorst = scatter(Dv(worst_idx), Pv(worst_idx), 60, 'w', 'filled', ...
-        'MarkerEdgeColor','k', 'DisplayName','Bottom-2');
+        %% ----------------- 4) 3D Surface Plot -----------------
+        figure(fig_id); clf; set(gcf,'Color','w');
+        fig_id = fig_id + 1;
 
-    xlabel('Duty');
-    ylabel('Pulse Period (s)');
-    title(sprintf('\\DeltaPlating Heatmap (with markers, stage mode = %d)', mode_target));
+        surf(DUTY, TPER, Z, 'FaceAlpha',0.9);
+        shading interp;
+        colorbar;
 
-    set(gca,'YScale','log');
-    set(gca,'FontSize',14);
+        xlabel('Duty');
+        ylabel('Pulse Period (s)');
+        zlabel('\DeltaPlating');
+        title(sprintf('MSCC4 Pulse Grid (stage=%d, I_{rest}=%.0f)', ...
+                       mode_target, Ival));
 
-    % ✅ contourf는 레전드에서 빼고, 점들만 표시
-    legend([hBest, hWorst], {'Top-2 peak', 'Bottom-2'}, 'Location','bestoutside');
+        set(gca,'YScale','log');
+        set(gca,'FontSize',14);
 
-    hold off;
+        %% ----------------- 5) Heatmap (clean) -----------------
+        figure(fig_id); clf; set(gcf,'Color','w');
+        fig_id = fig_id + 1;
 
+        contourf(DUTY, TPER, Z, 40, 'LineColor','none');
+        colorbar;
 
-end
+        xlabel('Duty');
+        ylabel('Pulse Period (s)');
+        title(sprintf('\\DeltaPlating Heatmap (clean, stage=%d, I_{rest}=%.0f)', ...
+                       mode_target, Ival));
+
+        set(gca,'YScale','log');
+        set(gca,'FontSize',14);
+
+        %% ----------------- 6) Heatmap + markers ---------------
+        figure(fig_id); clf; set(gcf,'Color','w');
+        fig_id = fig_id + 1;
+
+        contourf(DUTY, TPER, Z, 40, 'LineColor','none');
+        colorbar;
+        hold on;
+
+        hBest  = scatter(Dv(best_idx),  Pv(best_idx), 80, 'g', 'filled', ...
+            'MarkerEdgeColor','k', 'DisplayName','Best (low \DeltaPlating)');
+        hWorst = scatter(Dv(worst_idx), Pv(worst_idx), 60, 'r', 'filled', ...
+            'MarkerEdgeColor','k', 'DisplayName','Worst (high \DeltaPlating)');
+
+        xlabel('Duty');
+        ylabel('Pulse Period (s)');
+        title(sprintf('\\DeltaPlating Heatmap (markers, stage=%d, I_{rest}=%.0f)', ...
+                       mode_target, Ival));
+
+        set(gca,'YScale','log');
+        set(gca,'FontSize',14);
+
+        legend([hBest, hWorst], ...
+              {'Best (low \DeltaPlating)','Worst (high \DeltaPlating)'}, ...
+               'Location','bestoutside');
+
+        hold off;
+
+    end % Irest loop
+end % stage loop
 
 fprintf('\n총 PEAKS 개수: %d\n', numel(PEAKS));
 
+
+
 %% =========================================================================
-% 3) Global best 2 / worst 2 선택
+% 4) COMSOL 모델 로드 및 모든 best/worst 포인트 시뮬 실행
 % =========================================================================
-if numel(PEAKS) < 4
-    error('PEAKS가 4개 미만입니다. grid에서 peak 추출이 제대로 되었는지 확인하세요.');
-end
-
-all_dplat = [PEAKS.dplat];
-
-[~, idx_desc] = sort(all_dplat, 'descend');
-idx_best_global  = idx_desc(1:2);    % top-2
-
-[~, idx_asc] = sort(all_dplat, 'ascend');
-idx_worst_global = idx_asc(1:2);     % bottom-2
-
-sel_idx = [idx_best_global, idx_worst_global];
-SEL = PEAKS(sel_idx);
-
-fprintf('\n=== Global Top-2 / Bottom-2 선택 결과 ===\n');
-for k = 1:numel(SEL)
-    fprintf('(%d) kind=%s, stage=%d, duty=%.3f, Tper=%.3g, d_plat=%.4e, I_rest=%.3g\n', ...
-        k, SEL(k).kind, SEL(k).stage, SEL(k).duty, SEL(k).Tper, SEL(k).dplat, SEL(k).Irest);
-end
-%% =========================================================================
-% 4) COMSOL 모델 로드 및 best/worst 4 points 시뮬 실행
-% =========================================================================
-fprintf('\n[SIM] Pulse best/worst 4 points 시뮬레이션 시작\n');
+fprintf('\n[SIM] Pulse ALL best/worst points 시뮬레이션 시작\n');
 
 import com.comsol.model.*
 import com.comsol.model.util.*
@@ -270,32 +270,36 @@ assert(isfile(full_path),'mph 파일 없음: %s', full_path);
 
 model = mphload(full_path);
 
-% --- 시뮬 설정값 (필요하면 숫자 바꿔서 써도 됨) ---------------------------
-dt_out_default     = 5;     % [s] output 간격  (range(0, dt_out, t_cycling))
-t_cycling_default  = 2000;  % [s] 총 시뮬 시간 (필요시 적절히 수정)
+% --- 시뮬 설정값 ----------------------------------------------------------
+dt_out_default     = 5;     % [s] range(0, dt_out, t_cycling)
+t_cycling_default  = 2000;  % [s] 총 시뮬 시간 (필요시 수정)
 
-% --- 결과 저장용 구조체 배열 ---------------------------------------------
-Ncase = numel(SEL);
+% --- 결과 저장용 구조체 배열 (모든 PEAKS에 대해) -------------------------
+Ncase = numel(PEAKS);
 Rcase(Ncase) = struct('t',[],'E',[],'I',[], ...
                       'vdiff',[],'Tavg',[],'Tmax',[], ...
-                      'Qh',[],'pc',[],'label',"");
+                      'Qh',[],'pc',[], ...
+                      'label',"",'stage',[],'kind',"",'dplat',[]);
 
 for k = 1:Ncase
-    st = SEL(k).stage;
-    du = SEL(k).duty;
-    Tp = SEL(k).Tper;
-    Ir = SEL(k).Irest;
+    st = PEAKS(k).stage;
+    du = PEAKS(k).duty;
+    Tp = PEAKS(k).Tper;
+    Ir = PEAKS(k).Irest;
+    if isnan(Ir), Ir = 0; end
 
     t_cycling = t_cycling_default;
 
     fprintf('\n[SIM] Case %d: kind=%s, stage=%d, duty=%.3f, Tper=%.3g, Irest=%.3g\n', ...
-        k, SEL(k).kind, st, du, Tp, Ir);
+        k, PEAKS(k).kind, st, du, Tp, Ir);
 
     R = run_pulse_case(model, st, du, Tp, Ir, t_cycling, dt_out_default);
 
-    % 레이블: legend에 쓸 이름
     R.label = sprintf('%s: st%d, duty=%.2f, T=%.3gs, Irest=%.2g', ...
-        upper(char(SEL(k).kind)), st, du, Tp, Ir);
+        upper(char(PEAKS(k).kind)), st, du, Tp, Ir);
+    R.stage = st;
+    R.kind  = PEAKS(k).kind;
+    R.dplat = PEAKS(k).dplat;
 
     Rcase(k) = R;
 end
@@ -309,141 +313,352 @@ assert(isfolder(fileparts(fig_base_dir)) || isfolder(fig_base_dir), ...
        'Figure 상위 폴더가 유효하지 않습니다.');
 
 ts = datestr(now,'yyyymmdd_HHMMSS');
-fig_out_dir = fullfile(fig_base_dir, ['pulse_bestworst_' ts]);
+fig_out_dir = fullfile(fig_base_dir, ['pulse_bestworst_ALL_' ts]);
 if ~isfolder(fig_out_dir), mkdir(fig_out_dir); end
 
-% 컬러 팔레트 (4케이스용)
-Ncase = numel(Rcase);
-Cmap  = lines(Ncase);  % simple하게 MATLAB 기본 lines 팔레트 사용
+% 팔레트 색상 (RGB)
+colTavg = [0,115,194]/255;   % #0073C2
+colTmax = [205,83,76]/255;   % #CD534C
+colV    = [32,133,78]/255;   % #20854E
+colI    = [225,135,39]/255;  % #E18727
+colAn   = [146,94,159]/255;  % #925E9F
+colPc   = [126,97,72]/255;   % #7E6148
+colGrey = [116,118,120]/255; % #747678
+colBlue = colTavg;           % #0073C2
 
-labels = {Rcase.label};
-
-%% =========================================================================
-% 5-1) Voltage & Current vs time (yyaxis)
-% =========================================================================
-f1 = figure(6001); clf; set(gcf,'Color','w'); hold on; grid on;
-title('Pulse best/worst: Voltage & Current vs time');
-
-yyaxis left;
-for k = 1:Ncase
-    plot(Rcase(k).t, Rcase(k).E, '-', 'LineWidth',1.5, 'Color', Cmap(k,:));
-end
-ylabel('E_{cell} (V)');
-
-yyaxis right;
-for k = 1:Ncase
-    plot(Rcase(k).t, Rcase(k).I, '--', 'LineWidth',1.2, 'Color', Cmap(k,:));
-end
-ylabel('I_{cell} (A)');
-
-xlabel('t (s)');
-legend(labels, 'Location','bestoutside');
-
-ax = gca;
-ax.XColor      = 'k';
-ax.YAxis(1).Color = 'k';
-ax.YAxis(2).Color = 'k';
-
-out_png = fullfile(fig_out_dir, 'pulse_bestworst_voltage_current.png');
-export_png(f1, out_png);
-fprintf('Saved: %s\n', out_png);
 
 %% =========================================================================
-% 5-2) Temperature vs time (T_{avg}, T_{max}) [°C]
+% 5-A) 케이스별 개별 플롯 (V/I, T, anode, plating) - grid OFF
 % =========================================================================
-f2 = figure(6002); clf; set(gcf,'Color','w'); hold on; grid on;
-title('Pulse best/worst: Temperature vs time');
-
 for k = 1:Ncase
-    TavgC = Rcase(k).Tavg - 273.15;
-    TmaxC = Rcase(k).Tmax - 273.15;
+    R  = Rcase(k);
+    lb = R.label;
 
-    % T_avg: 실선
-    plot(Rcase(k).t, TavgC, '-',  'LineWidth',1.6, 'Color', Cmap(k,:));
-    % T_max: 점선 (같은 색)
-    plot(Rcase(k).t, TmaxC, '--', 'LineWidth',1.4, 'Color', Cmap(k,:));
+    % 1) V, I vs time -------------------------------------------------------
+    f1 = figure; set(gcf,'Color','w'); hold on; grid off;
+    title(sprintf('Case %d: Voltage & Current vs time (%s)', k, lb));
+
+    yyaxis left;
+    plot(R.t, R.E, '-', 'LineWidth',1.5, 'Color', colV);
+    ylabel('E_{cell} (V)');
+
+    yyaxis right;
+    plot(R.t, R.I, '--', 'LineWidth',1.2, 'Color', colI);
+    ylabel('I_{cell} (A)');
+
+    xlabel('t (s)');
+    legend({'E_{cell}','I_{cell}'}, 'Location','best');
+
+    ax = gca;
+    ax.XColor        = 'k';
+    ax.YAxis(1).Color = 'k';
+    ax.YAxis(2).Color = 'k';
+
+    out_png = fullfile(fig_out_dir, sprintf('case%02d_voltage_current.png', k));
+    export_png(f1, out_png);
+
+    % 2) Temperature vs time (T_avg, T_max) --------------------------------
+    f2 = figure; set(gcf,'Color','w'); hold on; grid off;
+    title(sprintf('Case %d: Temperature vs time (%s)', k, lb));
+
+    TavgC = R.Tavg - 273.15;
+    TmaxC = R.Tmax - 273.15;
+
+    plot(R.t, TavgC, '-',  'LineWidth',1.6, 'Color', colTavg);
+    plot(R.t, TmaxC, '--', 'LineWidth',1.4, 'Color', colTmax);
+
+    xlabel('t (s)');
+    ylabel('Temperature (°C)');
+    legend({'T_{avg}','T_{max}'}, 'Location','best');
+
+    ax = gca;
+    ax.XColor = 'k';
+    ax.YColor = 'k';
+
+    out_png = fullfile(fig_out_dir, sprintf('case%02d_temperature.png', k));
+    export_png(f2, out_png);
+
+    % 3) Anode potential vs time -------------------------------------------
+    f3 = figure; set(gcf,'Color','w'); hold on; grid off;
+    title(sprintf('Case %d: Anode potential vs time (%s)', k, lb));
+
+    plot(R.t, R.vdiff, 'LineWidth',1.6, 'Color', colAn);
+
+    xlabel('t (s)');
+    ylabel('Anode potential (V)');
+    legend({'Anode potential'}, 'Location','best');
+
+    ax = gca;
+    ax.XColor = 'k';
+    ax.YColor = 'k';
+
+    out_png = fullfile(fig_out_dir, sprintf('case%02d_anode_potential.png', k));
+    export_png(f3, out_png);
+
+    % 4) Plating capacity vs time ------------------------------------------
+    f4 = figure; set(gcf,'Color','w'); hold on; grid off;
+    title(sprintf('Case %d: Plating capacity vs time (%s)', k, lb));
+
+    plot(R.t, R.pc, 'LineWidth',1.6, 'Color', colPc);
+
+    xlabel('t (s)');
+    ylabel('plating\_cap (Ah/m^2)');
+    legend({'plating\_cap'}, 'Location','best');
+
+    ax = gca;
+    ax.XColor = 'k';
+    ax.YColor = 'k';
+
+    out_png = fullfile(fig_out_dir, sprintf('case%02d_platingcap.png', k));
+    export_png(f4, out_png);
 end
 
-xlabel('t (s)');
-ylabel('Temperature (°C)');
-legend_str = cell(1, 2*Ncase);
-for k = 1:Ncase
-    legend_str{2*k-1} = sprintf('%s - T_{avg}',  labels{k});
-    legend_str{2*k}   = sprintf('%s - T_{max}',  labels{k});
+
+%% =========================================================================
+% 5-B) stage별 overlay 플롯 (V/I, T, anode, plating) - grid OFF
+%      best1/best2/worst1/worst2 를 line style + marker로 구분
+% =========================================================================
+unique_stage = unique([Rcase.stage]);
+
+for s = unique_stage
+    idx_s = find([Rcase.stage] == s);
+    if isempty(idx_s), continue; end
+
+    Rs = Rcase(idx_s);
+    Ns = numel(Rs);
+    labels_s = {Rs.label};
+
+    % ---- 스타일 결정 (best1/best2/worst1/worst2) ------------------------
+    styles(Ns) = struct('ls','-','mk',''); %#ok<AGROW>
+
+    % best들
+    best_loc  = find(strcmp({Rs.kind},'best'));
+    if ~isempty(best_loc)
+        [~,ord_b] = sort([Rs(best_loc).dplat],'ascend');
+        best_loc = best_loc(ord_b);
+        if numel(best_loc) >= 1
+            styles(best_loc(1)).ls = '-';  styles(best_loc(1)).mk = 'o'; % best1
+        end
+        if numel(best_loc) >= 2
+            styles(best_loc(2)).ls = '-';  styles(best_loc(2)).mk = 's'; % best2
+        end
+    end
+
+    % worst들
+    worst_loc = find(strcmp({Rs.kind},'worst'));
+    if ~isempty(worst_loc)
+        [~,ord_w] = sort([Rs(worst_loc).dplat],'descend');
+        worst_loc = worst_loc(ord_w);
+        if numel(worst_loc) >= 1
+            styles(worst_loc(1)).ls = '--'; styles(worst_loc(1)).mk = '^'; % worst1
+        end
+        if numel(worst_loc) >= 2
+            styles(worst_loc(2)).ls = '--'; styles(worst_loc(2)).mk = 'd'; % worst2
+        end
+    end
+
+    % marker 찍는 인덱스 (너무 많으면 지저분하니까 샘플링)
+    getMarkerIdx = @(n) round(linspace(1, n, min(12,n)));
+
+    %% ---- 1) V, I vs time -----------------------------------------------
+    f1s = figure; set(gcf,'Color','w'); hold on; grid off;
+    title(sprintf('Stage %d: Voltage & Current vs time (best/worst)', s));
+
+    yyaxis left;
+    for j = 1:Ns
+        st = styles(j);
+        h = plot(Rs(j).t, Rs(j).E, 'LineWidth',1.5, ...
+             'Color', colV, 'LineStyle', st.ls);
+        if ~isempty(st.mk)
+            h.Marker = st.mk;
+            h.MarkerIndices = getMarkerIdx(numel(Rs(j).t));
+        end
+    end
+    ylabel('E_{cell} (V)');
+
+    yyaxis right;
+    for j = 1:Ns
+        st = styles(j);
+        h = plot(Rs(j).t, Rs(j).I, 'LineWidth',1.2, ...
+             'Color', colI, 'LineStyle', st.ls);
+        if ~isempty(st.mk)
+            h.Marker = st.mk;
+            h.MarkerIndices = getMarkerIdx(numel(Rs(j).t));
+        end
+    end
+    ylabel('I_{cell} (A)');
+
+    xlabel('t (s)');
+    legend(labels_s, 'Location','bestoutside');
+
+    ax = gca;
+    ax.XColor        = 'k';
+    ax.YAxis(1).Color = 'k';
+    ax.YAxis(2).Color = 'k';
+
+    out_png = fullfile(fig_out_dir, sprintf('stage%d_voltage_current_overlay.png', s));
+    export_png(f1s, out_png);
+
+    %% ---- 2) Temperature vs time ----------------------------------------
+    f2s = figure; set(gcf,'Color','w'); hold on; grid off;
+    title(sprintf('Stage %d: Temperature vs time (best/worst)', s));
+
+    for j = 1:Ns
+        st = styles(j);
+        TavgC = Rs(j).Tavg - 273.15;
+        TmaxC = Rs(j).Tmax - 273.15;
+
+        h1 = plot(Rs(j).t, TavgC, 'LineWidth',1.6, ...
+              'Color', colTavg, 'LineStyle', st.ls);
+        h2 = plot(Rs(j).t, TmaxC, 'LineWidth',1.4, ...
+              'Color', colTmax, 'LineStyle', st.ls);
+        if ~isempty(st.mk)
+            idxMk = getMarkerIdx(numel(Rs(j).t));
+            h1.Marker = st.mk; h1.MarkerIndices = idxMk;
+            h2.Marker = st.mk; h2.MarkerIndices = idxMk;
+        end
+    end
+
+    xlabel('t (s)');
+    ylabel('Temperature (°C)');
+
+    legT = cell(1,2*Ns);
+    for j = 1:Ns
+        legT{2*j-1} = sprintf('%s - T_{avg}', labels_s{j});
+        legT{2*j}   = sprintf('%s - T_{max}', labels_s{j});
+    end
+    legend(legT, 'Location','bestoutside');
+
+    ax = gca;
+    ax.XColor = 'k';
+    ax.YColor = 'k';
+
+    out_png = fullfile(fig_out_dir, sprintf('stage%d_temperature_overlay.png', s));
+    export_png(f2s, out_png);
+
+    %% ---- 3) Anode potential vs time ------------------------------------
+    f3s = figure; set(gcf,'Color','w'); hold on; grid off;
+    title(sprintf('Stage %d: Anode potential vs time (best/worst)', s));
+
+    for j = 1:Ns
+        st = styles(j);
+        h = plot(Rs(j).t, Rs(j).vdiff, 'LineWidth',1.6, ...
+             'Color', colAn, 'LineStyle', st.ls);
+        if ~isempty(st.mk)
+            h.Marker = st.mk;
+            h.MarkerIndices = getMarkerIdx(numel(Rs(j).t));
+        end
+    end
+
+    xlabel('t (s)');
+    ylabel('Anode potential (V)');
+    legend(labels_s, 'Location','bestoutside');
+
+    ax = gca;
+    ax.XColor = 'k';
+    ax.YColor = 'k';
+
+    out_png = fullfile(fig_out_dir, sprintf('stage%d_anode_potential_overlay.png', s));
+    export_png(f3s, out_png);
+
+    %% ---- 4) Plating capacity vs time -----------------------------------
+    f4s = figure; set(gcf,'Color','w'); hold on; grid off;
+    title(sprintf('Stage %d: Plating capacity vs time (best/worst)', s));
+
+    for j = 1:Ns
+        st = styles(j);
+        h = plot(Rs(j).t, Rs(j).pc, 'LineWidth',1.6, ...
+             'Color', colPc, 'LineStyle', st.ls);
+        if ~isempty(st.mk)
+            h.Marker = st.mk;
+            h.MarkerIndices = getMarkerIdx(numel(Rs(j).t));
+        end
+    end
+
+    xlabel('t (s)');
+    ylabel('plating\_cap (Ah/m^2)');
+    legend(labels_s, 'Location','bestoutside');
+
+    ax = gca;
+    ax.XColor = 'k';
+    ax.YColor = 'k';
+
+    out_png = fullfile(fig_out_dir, sprintf('stage%d_platingcap_overlay.png', s));
+    export_png(f4s, out_png);
 end
-legend(legend_str, 'Location','bestoutside');
+
+
+%% =========================================================================
+% 5-C) stage별 best1 충전시간 vs baseline 막대그래프
+% =========================================================================
+% baseline: stage_mode == 0 의 t_charge 평균
+base_idx = (stage_all == 0);
+if any(base_idx)
+    baseline_t = mean(tcharge_all(base_idx), 'omitnan');
+else
+    baseline_t = NaN;
+    warning('stage_mode = 0 baseline 데이터를 찾지 못했습니다. baseline t_charge = NaN');
+end
+
+stages = stage_list(:)';
+nS = numel(stages);
+t_best = nan(nS,1);
+
+for i = 1:nS
+    s = stages(i);
+    idx_best_s = find([PEAKS.stage] == s & strcmp({PEAKS.kind},'best'));
+    if ~isempty(idx_best_s)
+        % 해당 stage의 best 중 dplat 최소 = best1
+        [~,ii_min] = min([PEAKS(idx_best_s).dplat]);
+        pk = PEAKS(idx_best_s(ii_min));
+        if ~isnan(pk.tcharge)
+            t_best(i) = pk.tcharge;
+        else
+            % CSV에 없으면 시뮬 결과에서 마지막 시간 사용
+            idx_r = find([Rcase.stage] == s & strcmp({Rcase.kind},'best'),1);
+            if ~isempty(idx_r)
+                t_best(i) = Rcase(idx_r).t(end);
+            end
+        end
+    end
+end
+
+vals = [baseline_t; t_best];
+labels_bar = [{'Baseline'}, arrayfun(@(s) sprintf('Stage %d',s), stages,'uni',0)];
+
+fbar = figure; set(gcf,'Color','w'); grid on;
+b = bar(vals);
+b.FaceColor = 'flat';
+
+for i = 1:numel(vals)
+    if i == 1
+        b.CData(i,:) = colGrey; % baseline
+    else
+        b.CData(i,:) = colBlue; % best1
+    end
+end
+
+set(gca,'XTick',1:numel(labels_bar),'XTickLabel',labels_bar);
+xlabel('Protocol');
+ylabel('t_{charge} (s)');
+title('Pulse best-1 charging time vs baseline');
 
 ax = gca;
 ax.XColor = 'k';
 ax.YColor = 'k';
 
-out_png = fullfile(fig_out_dir, 'pulse_bestworst_temperature.png');
-export_png(f2, out_png);
-fprintf('Saved: %s\n', out_png);
+out_png = fullfile(fig_out_dir, 'bar_tcharge_best1_vs_baseline.png');
+export_png(fbar, out_png);
 
-%% =========================================================================
-% 5-3) Anode potential vs time
-% =========================================================================
-f3 = figure(6003); clf; set(gcf,'Color','w'); hold on; grid on;
-title('Pulse best/worst: Anode potential vs time');
-
-for k = 1:Ncase
-    plot(Rcase(k).t, Rcase(k).vdiff, 'LineWidth',1.6, 'Color', Cmap(k,:));
-end
-
-xlabel('t (s)');
-ylabel('Anode potential (V)');
-legend(labels, 'Location','bestoutside');
-
-ax = gca;
-ax.XColor = 'k';
-ax.YColor = 'k';
-
-out_png = fullfile(fig_out_dir, 'pulse_bestworst_anode_potential.png');
-export_png(f3, out_png);
-fprintf('Saved: %s\n', out_png);
-
-%% =========================================================================
-% 5-4) Li plating capacity vs time
-% =========================================================================
-f4 = figure(6004); clf; set(gcf,'Color','w'); hold on; grid on;
-title('Pulse best/worst: Plating capacity vs time');
-
-for k = 1:Ncase
-    plot(Rcase(k).t, Rcase(k).pc, 'LineWidth',1.6, 'Color', Cmap(k,:));
-end
-
-xlabel('t (s)');
-ylabel('plating\_cap (Ah/m^2)');
-legend(labels, 'Location','bestoutside');
-
-ax = gca;
-ax.XColor = 'k';
-ax.YColor = 'k';
-
-out_png = fullfile(fig_out_dir, 'pulse_bestworst_platingcap.png');
-export_png(f4, out_png);
-fprintf('Saved: %s\n', out_png);
 
 %% ======================= Local helper functions ==========================
 
 function R = run_pulse_case(model, stage_mode, duty, Tper, Irest, t_cycling, dt_out)
     % run_pulse_case
-    %   - stage_mode : pulse_stage_mode (1~7)
-    %   - duty       : duty_cycle
-    %   - Tper       : pulse_period_s [s]
-    %   - Irest      : rest current 계수 (CSV에서 읽은 값)
-    %   - t_cycling  : 총 시뮬레이션 시간 [s]
-    %   - dt_out     : 출력 시간 간격 [s]   (range(0,dt_out,t_cycling))
-    %
-    % ※ 파라미터 이름은 네 COMSOL 모델과 맞게 필요하면 수정해라.
-
-    % ---- (1) 파라미터 세팅 ----
     model.param.set('pulse_stage_mode', num2str(stage_mode));
     model.param.set('duty_cycle',       num2str(duty));
     model.param.set('pulse_period_s',   num2str(Tper));
 
-    % Irest / rest-current param 이름이 모델마다 다를 수 있어서 두 가지 시도
     tried_Irest = false;
     try
         model.param.set('I_rest', num2str(Irest));
@@ -461,23 +676,17 @@ function R = run_pulse_case(model, stage_mode, duty, Tper, Irest, t_cycling, dt_
         warning('I_rest 관련 파라미터 설정 실패. 모델 param 이름을 확인하세요.');
     end
 
-    % t_cycling 파라미터
     model.param.set('t_cycling', num2str(t_cycling));
 
-    % ---- (2) Output times = range(0, dt_out, t_cycling) ----
     tlist_str = sprintf('range(0,%g,t_cycling)', dt_out);
 
-    % pulse study / dataset 이름은 네 pulse-opt 코드 기준으로 맞춰줌
-    studyTag = 'std3';   % (필요시 네 모델에 맞게 수정)
-    dset     = 'dset37'; % (필요시 수정)
+    studyTag = 'std3';   % 필요시 수정
+    dset     = 'dset37'; % 필요시 수정
 
     set_tlist_safe(model, studyTag, tlist_str);
 
-    % ---- (3) 단일 실행 ----
     model.study(studyTag).run();
 
-    % ---- (4) 데이터 취득 ----
-    % expr 구성은 기존 run_and_eval과 비슷하게 맞춤
     expr = {'t', ...
             'E_cell', ...
             'liion.cdc1.Icell', ...
@@ -489,20 +698,19 @@ function R = run_pulse_case(model, stage_mode, duty, Tper, Irest, t_cycling, dt_
     D = mpheval(model, expr, 'dataset', dset, 'edim', 'point', ...
                 'selection', 2, 'solnum', 'all');
 
-    t   = D.d1;
-    E   = D.d2;
-    I   = D.d3;
-    v   = D.d4;
+    t    = D.d1;
+    E    = D.d2;
+    I    = D.d3;
+    v    = D.d4;
     Tavg = toCol(D,5);
     Tmax = toCol(D,6);
     Qh   = toCol(D,7);
     pc   = toCol(D,8);
 
-    % Pulse의 경우 CC/CV 구분 selection이 따로 없으면 전체 사용
     R = struct('t',t, 'E',E, 'I',I, ...
                'vdiff',v, 'Tavg',Tavg, 'Tmax',Tmax, ...
                'Qh',Qh, 'pc',pc, ...
-               'label',"");
+               'label',"", 'stage',[], 'kind',"", 'dplat',[]);
 end
 
 function export_png(fig_handle, outpath)
@@ -519,7 +727,6 @@ function export_png(fig_handle, outpath)
 end
 
 function set_tlist_safe(model, studyTag, tlist_str)
-    % 기존 unified optimization 코드에서 쓰던 걸 재사용
     tried = false;
     for cand = {'time','time1','time2','step1','step2'}
         try
