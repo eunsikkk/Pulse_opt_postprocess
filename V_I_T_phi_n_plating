@@ -79,7 +79,7 @@ for k = 1:numel(DS)
 
     % ===== 제약 설정 (네 최적화 조건과 동일하게 맞춰라) =====
     safety_eps  = 0.0;       % min(Ect) > safety_eps
-    plating_eps = 5e-3;      % plating_cap upper bound
+    plating_eps = 0.0002;      % plating_cap upper bound
 
     feas   = (s > safety_eps) & (pc <= plating_eps);
     infeas = ~feas;
@@ -511,6 +511,8 @@ function R = run_and_eval(protocol, model, Cvals, t_cycling)
             model.param.set('fourth_MSCC_Crate', num2str(C34));
             model.param.set('fifth_MSCC_Crate',  num2str(C56));
             model.param.set('sixth_MSCC_Crate',  num2str(C56));
+
+            model.param.set('pulse_stage_mode', '0');
             studyTag = 'std2'; dset = 'dset3';
 
         otherwise
