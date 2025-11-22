@@ -1,0 +1,110 @@
+%% =========================================================================
+% 0) Pulse Grid CSV 파일 선택
+% =========================================================================
+base_dir = 'G:\공유 드라이브\Battery Software Group (2025)\Members\최은식\COMSOL\MSCC_optimization\Pulse_opt';
+assert(isfolder(base_dir), '폴더가 존재하지 않습니다: %s', base_dir);
+
+[fn, fp] = uigetfile(fullfile(base_dir, '*.csv'), ...
+                     'Pulse Grid CSV 파일을 선택하세요');
+
+if isequal(fn, 0)
+    error('파일 선택이 취소되었습니다.');
+end
+
+fullpath_csv = fullfile(fp, fn);
+fprintf('선택한 CSV: %s\n', fullpath_csv);
+
+
+%% =========================================================================
+% 1) CSV 로드
+% =========================================================================
+T = readtable(fullpath_csv);
+
+% 필수 컬럼
+stage = T.stage_mode;
+duty  = T.duty;
+Tper  = T.pulse_period_s;
+dplat = T.d_plating;    % = plating_cap - plating_cap_base
+
+% 🔹 stage_mode 1~7만 사용 (0 = baseline은 제외)
+stage_list = setdiff(unique(stage), 0);   % 또는 그냥: stage_list = (1:7)';
+
+fprintf('\n총 stage_mode 종류 (0 제외): '); disp(stage_list');
+
+fig_id = 1;
+
+%% =========================================================================
+% 2) stage_mode = 1~7 모든 모드 반복
+% =========================================================================
+for mode_target = stage_list'
+
+    fprintf('\n==============================================\n');
+    fprintf('>> stage_mode = %d 처리중...\n', mode_target);
+    fprintf('==============================================\n');
+
+    % 인덱싱
+    idx = (stage == mode_target);
+
+    duty_f  = duty(idx);
+    Tper_f  = Tper(idx);
+    dplat_f = dplat(idx);
+
+    fprintf('stage_mode = %d 데이터 개수: %d\n', ...
+            mode_target, sum(idx));
+
+    % 혹시라도 데이터 없으면 스킵
+    if isempty(duty_f)
+        warning('stage_mode %d 는 데이터가 없습니다. 스킵합니다.', mode_target);
+        continue;
+    end
+
+    %% =========================================================================
+    % 3) duty × Tper grid 구성
+    %% =========================================================================
+    duty_u = unique(duty_f);
+    Tper_u = unique(Tper_f);
+
+    [DUTY, TPER] = meshgrid(duty_u, Tper_u);
+
+    Z = nan(size(DUTY));
+    for i = 1:numel(duty_f)
+        rr = find(Tper_u == Tper_f(i));
+        cc = find(duty_u == duty_f(i));
+        Z(rr, cc) = dplat_f(i);
+    end
+
+    %% =========================================================================
+    % 4) 3D Surface Plot
+    %% =========================================================================
+    figure(fig_id); clf; set(gcf,'Color','w');
+    fig_id = fig_id + 1;
+
+    surf(DUTY, TPER, Z, 'FaceAlpha',0.9);
+    shading interp;
+    colorbar;
+
+    xlabel('Duty');
+    ylabel('Pulse Period (s)');
+    zlabel('\DeltaPlating');
+    title(sprintf('MSCC4 Pulse Grid (stage mode = %d)', mode_target));
+
+    set(gca,'YScale','log');   % Tper log 스케일
+    set(gca,'FontSize',14);
+
+    %% =========================================================================
+    % 5) 2D Heatmap (Contourf)
+    %% =========================================================================
+    figure(fig_id); clf; set(gcf,'Color','w');
+    fig_id = fig_id + 1;
+
+    contourf(DUTY, TPER, Z, 40, 'LineColor','none');
+    colorbar;
+
+    xlabel('Duty');
+    ylabel('Pulse Period (s)');
+    title(sprintf('\\DeltaPlating Heatmap (stage mode = %d)', mode_target));
+
+    set(gca,'YScale','log');
+    set(gca,'FontSize',14);
+
+end
