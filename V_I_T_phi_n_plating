@@ -215,7 +215,7 @@ PROT(end+1) = struct('name','MSCC2', 'R',R_mscc2, 'color',colMSCC2);
 PROT(end+1) = struct('name','MSCC4', 'R',R_mscc4, 'color',colMSCC4);
 
 %% 5.1) Figure 1 — 전압/전류 vs time (yyaxis, 색 = 물리량 기준) -------------
-f1 = figure(4101); clf; set(gcf,'Color','w'); hold on; grid on;
+f1 = figure(4101); clf; set(gcf,'Color','w'); hold on; grid off;
 title('Voltage & Current vs time (Optimal C)');
 
 % 프로토콜별 line style 지정
@@ -248,7 +248,7 @@ ax.YAxis(2).Color = 'k';
 export_png(f1, fullfile(fig_out_dir, 'timeseries_voltage_current.png'));
 
 %% 5.2) Figure 2 — Anode potential vs time (색 = 보라) ----------------------
-f2 = figure(4102); clf; set(gcf,'Color','w'); hold on; grid on;
+f2 = figure(4102); clf; set(gcf,'Color','w'); hold on; grid off;
 plot(R_cccv.t,  R_cccv.vdiff,  'LineStyle',ls_CCCV,  'LineWidth',1.6, 'Color',colAn);
 plot(R_mscc2.t, R_mscc2.vdiff, 'LineStyle',ls_MSCC2, 'LineWidth',1.6, 'Color',colAn);
 plot(R_mscc4.t, R_mscc4.vdiff, 'LineStyle',ls_MSCC4, 'LineWidth',1.6, 'Color',colAn);
@@ -264,7 +264,7 @@ ax.YColor = 'k';
 export_png(f2, fullfile(fig_out_dir, 'timeseries_anode_potential.png'));
 
 %% 5.3) Figure 3 — T_{avg}, T_{max} vs time [°C] ---------------------------
-f3 = figure(4103); clf; set(gcf,'Color','w'); hold on; grid on;
+f3 = figure(4103); clf; set(gcf,'Color','w'); hold on; grid off;
 
 TavgC_cccv  = R_cccv.Tavg  - 273.15;
 TavgC_mscc2 = R_mscc2.Tavg - 273.15;
@@ -418,7 +418,7 @@ b1.FaceColor = 'flat';
 for k = 1:nP
     b1.CData(k,:) = colors(k,:);
 end
-grid on;
+grid off;
 
 xticks(1:nP);
 xticklabels(names);
@@ -438,7 +438,7 @@ b2.FaceColor = 'flat';
 for k = 1:nP
     b2.CData(k,:) = colors(k,:);
 end
-grid on;
+grid off;
 
 xticks(1:nP);
 xticklabels(names);
