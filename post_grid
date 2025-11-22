@@ -1,6 +1,8 @@
 %% =========================================================================
 % 0) Pulse Grid CSV 파일 선택
 % =========================================================================
+clc; clear; close all;
+
 base_dir = 'G:\공유 드라이브\Battery Software Group (2025)\Members\최은식\COMSOL\MSCC_optimization\Pulse_opt';
 assert(isfolder(base_dir), '폴더가 존재하지 않습니다: %s', base_dir);
 
@@ -21,64 +23,209 @@ fprintf('선택한 CSV: %s\n', fullpath_csv);
 T = readtable(fullpath_csv);
 
 % 필수 컬럼
-stage = T.stage_mode;
-duty  = T.duty;
-Tper  = T.pulse_period_s;
-dplat = T.d_plating;    % = plating_cap - plating_cap_base
+stage_all = T.stage_mode;
+duty_all  = T.duty;
+Tper_all  = T.pulse_period_s;
+dplat_all = T.d_plating;    % = plating_cap - plating_cap_base
 
-%% =========================================================================
-% 2) 특정 stage_mode 선택 (원하는 mode로 변경)
-% =========================================================================
-mode_target = 1;    % 원하는 stage mode 번호 지정
-idx = (stage == mode_target);
-
-duty  = duty(idx);
-Tper  = Tper(idx);
-dplat = dplat(idx);
-
-fprintf('stage_mode = %d 데이터 개수: %d\n', mode_target, sum(idx));
-
-%% =========================================================================
-% 3) duty × Tper grid 만들기
-% =========================================================================
-duty_u = unique(duty);
-Tper_u = unique(Tper);
-
-[DUTY, TPER] = meshgrid(duty_u, Tper_u);
-
-Z = nan(size(DUTY));
-for i = 1:numel(duty)
-    rr = find(Tper_u == Tper(i));
-    cc = find(duty_u == duty(i));
-    Z(rr, cc) = dplat(i);
+% (있으면 I_rest도 같이 읽자)
+if ismember('I_rest', T.Properties.VariableNames)
+    Irest_all = T.I_rest;
+elseif ismember('Irest', T.Properties.VariableNames)
+    Irest_all = T.Irest;
+else
+    % 없으면 0으로 두고 진행
+    Irest_all = zeros(height(T),1);
 end
 
-%% =========================================================================
-% 4) 3D Surface Plot
-% =========================================================================
-figure(1); clf; set(gcf,'Color','w');
-surf(DUTY, TPER, Z, 'FaceAlpha',0.9);
-shading interp;
-colorbar;
+% stage_mode 1~7만 사용 (0 = baseline 제외)
+stage_list = setdiff(unique(stage_all), 0);
+fprintf('\n총 stage_mode (0 제외): '); disp(stage_list');
 
-xlabel('Duty');
-ylabel('Pulse Period (s)');
-zlabel('\DeltaPlating = plating\_cap - base');
-title(sprintf('MSCC4 Pulse Grid (stage mode = %d)', mode_target));
+fig_id = 1;
 
-set(gca,'YScale','log');   % logscale period
-set(gca,'FontSize',14);
+% === 각 stage_mode별 peak 정보 저장용 ===
+PEAKS = struct('stage',{},'duty',{},'Tper',{},'dplat',{},'Irest',{},'kind',{});
 
 %% =========================================================================
-% 5) 2D Heatmap (Contourf)
+% 2) stage_mode = 1~7 모든 모드 반복
 % =========================================================================
-figure(2); clf; set(gcf,'Color','w');
-contourf(DUTY, TPER, Z, 40, 'LineColor','none');
-colorbar;
+for mode_target = stage_list'
 
-xlabel('Duty');
-ylabel('Pulse Period (s)');
-title(sprintf('\\DeltaPlating Heatmap (stage mode = %d)', mode_target));
+    fprintf('\n==============================================\n');
+    fprintf('>> stage_mode = %d 처리중...\n', mode_target);
+    fprintf('==============================================\n');
 
-set(gca,'YScale','log');   % pulse period logscale (권장)
-set(gca,'FontSize',14);
+    % 인덱싱
+    idx = (stage_all == mode_target);
+
+    duty  = duty_all(idx);
+    Tper  = Tper_all(idx);
+    dplat = dplat_all(idx);
+
+    fprintf('stage_mode = %d 데이터 개수: %d\n', ...
+            mode_target, sum(idx));
+
+    if isempty(duty)
+        warning('stage_mode %d 는 데이터가 없습니다. 스킵합니다.', mode_target);
+        continue;
+    end
+
+    %% =========================================================================
+    % 3) duty × Tper grid 구성
+    %% =========================================================================
+    duty_u = unique(duty);
+    Tper_u = unique(Tper);
+
+    [DUTY, TPER] = meshgrid(duty_u, Tper_u);
+
+    Z = nan(size(DUTY));
+    for i = 1:numel(duty)
+        rr = find(Tper_u == Tper(i));
+        cc = find(duty_u == duty(i));
+        Z(rr, cc) = dplat(i);
+    end
+
+    %% =========================================================================
+    % 3-1) 이 stage_mode 내에서 best 2 / worst 2 찾기
+    %% =========================================================================
+    Z_flat    = Z(:);
+    DUTY_flat = DUTY(:);
+    TPER_flat = TPER(:);
+
+    valid = ~isnan(Z_flat);
+    Zv = Z_flat(valid);
+    Dv = DUTY_flat(valid);
+    Pv = TPER_flat(valid);
+
+    % 데이터 포인트가 2개 미만이면 스킵
+    if numel(Zv) < 2
+        warning('stage_mode %d: 유효 Z 포인트가 2개 미만입니다. peak 계산 스킵.', mode_target);
+        continue;
+    end
+
+    % 가장 큰 2개
+    [~, sort_desc] = sort(Zv, 'descend');
+    nb = min(2, numel(Zv));
+    best_idx = sort_desc(1:nb);
+
+    % 가장 작은 2개
+    [~, sort_asc] = sort(Zv, 'ascend');
+    nw = min(2, numel(Zv));
+    worst_idx = sort_asc(1:nw);
+
+    % === 전체 테이블에서 이 포인트들에 해당하는 row 찾아서 I_rest까지 저장 ===
+    for ii = 1:nb
+        duty_val = Dv(best_idx(ii));
+        Tper_val = Pv(best_idx(ii));
+        dplat_val = Zv(best_idx(ii));
+
+        row = find(stage_all == mode_target & ...
+                   abs(duty_all - duty_val) < 1e-12 & ...
+                   abs(Tper_all - Tper_val) < 1e-12 & ...
+                   abs(dplat_all - dplat_val) < 1e-12, 1);
+        if isempty(row)
+            Irest_val = NaN;
+        else
+            Irest_val = Irest_all(row);
+        end
+
+        PEAKS(end+1) = struct( ...
+            'stage', mode_target, ...
+            'duty',  duty_val, ...
+            'Tper',  Tper_val, ...
+            'dplat', dplat_val, ...
+            'Irest', Irest_val, ...
+            'kind',  "best");
+    end
+
+    for ii = 1:nw
+        duty_val = Dv(worst_idx(ii));
+        Tper_val = Pv(worst_idx(ii));
+        dplat_val = Zv(worst_idx(ii));
+
+        row = find(stage_all == mode_target & ...
+                   abs(duty_all - duty_val) < 1e-12 & ...
+                   abs(Tper_all - Tper_val) < 1e-12 & ...
+                   abs(dplat_all - dplat_val) < 1e-12, 1);
+        if isempty(row)
+            Irest_val = NaN;
+        else
+            Irest_val = Irest_all(row);
+        end
+
+        PEAKS(end+1) = struct( ...
+            'stage', mode_target, ...
+            'duty',  duty_val, ...
+            'Tper',  Tper_val, ...
+            'dplat', dplat_val, ...
+            'Irest', Irest_val, ...
+            'kind',  "worst");
+    end
+
+       %% =========================================================================
+    % 4) 3D Surface Plot
+    %% =========================================================================
+    figure(fig_id); clf; set(gcf,'Color','w');
+    fig_id = fig_id + 1;
+
+    surf(DUTY, TPER, Z, 'FaceAlpha',0.9);
+    shading interp;
+    colorbar;
+
+    xlabel('Duty');
+    ylabel('Pulse Period (s)');
+    zlabel('\DeltaPlating');
+    title(sprintf('MSCC4 Pulse Grid (stage mode = %d)', mode_target));
+
+    set(gca,'YScale','log');   % Tper log 스케일
+    set(gca,'FontSize',14);
+
+    %% =========================================================================
+    % 5) 2D Heatmap (깨끗한 grid, 포인트 없음)
+    %% =========================================================================
+    figure(fig_id); clf; set(gcf,'Color','w');
+    fig_id = fig_id + 1;
+
+    contourf(DUTY, TPER, Z, 40, 'LineColor','none');
+    colorbar;
+
+    xlabel('Duty');
+    ylabel('Pulse Period (s)');
+    title(sprintf('\\DeltaPlating Heatmap (clean, stage mode = %d)', mode_target));
+
+    set(gca,'YScale','log');
+    set(gca,'FontSize',14);
+
+        %% =========================================================================
+    % 6) 2D Heatmap (Contourf) + best/worst 포인트 표시
+    %% =========================================================================
+    figure(fig_id); clf; set(gcf,'Color','w');
+    fig_id = fig_id + 1;
+
+    contourf(DUTY, TPER, Z, 40, 'LineColor','none');
+    colorbar;
+    hold on;
+
+    % best / worst 포인트 overlay (핸들 저장)
+    hBest  = scatter(Dv(best_idx),  Pv(best_idx), 80, 'r', 'filled', ...
+        'MarkerEdgeColor','k', 'DisplayName','Top-2 peak');
+    hWorst = scatter(Dv(worst_idx), Pv(worst_idx), 60, 'w', 'filled', ...
+        'MarkerEdgeColor','k', 'DisplayName','Bottom-2');
+
+    xlabel('Duty');
+    ylabel('Pulse Period (s)');
+    title(sprintf('\\DeltaPlating Heatmap (with markers, stage mode = %d)', mode_target));
+
+    set(gca,'YScale','log');
+    set(gca,'FontSize',14);
+
+    % ✅ contourf는 레전드에서 빼고, 점들만 표시
+    legend([hBest, hWorst], {'Top-2 peak', 'Bottom-2'}, 'Location','bestoutside');
+
+    hold off;
+
+
+end
+
+fprintf('\n총 PEAKS 개수: %d\n', numel(PEAKS));
