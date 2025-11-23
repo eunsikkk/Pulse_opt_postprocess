@@ -267,7 +267,7 @@ assert(isfile(full_path),'mph 파일 없음: %s', full_path);
 model = mphload(full_path);
 
 % --- Pulse OFF baseline (stage_mode = 0) 한 번 실행해서 baseline t_charge 얻기 ---
-dt_out_default    = 5;        % 위에서 쓰는 값 그대로 사용
+dt_out_default    = 1;        % 위에서 쓰는 값 그대로 사용
 t_cycling_default = 2000;     % 위에서 쓰는 값 그대로 사용
 
 fprintf('\n[SIM] Baseline (pulse OFF, stage_mode=0) running...\n');
@@ -277,7 +277,7 @@ R_base = run_pulse_case(model, 0, 0.5, 1.0, 0, t_cycling_default, dt_out_default
 
 Ncase = numel(PEAKS);
 Rcase(Ncase) = struct('t',[],'E',[],'I',[], ...
-                      'vdiff',[],'Tavg',[],'Tmax',[], ...
+                      'vdiff',[],'Tavg',[],'Tmax',[], 'Tmin',[], ...
                       'Qh',[],'pc',[], ...
                       'label',"",'stage',[],'kind',"",'dplat',[]);
 
@@ -373,19 +373,19 @@ for k = 1:Ncase
     out_png = fullfile(fig_out_dir, sprintf('case%02d_voltage_current.png', k));
     export_png(f1, out_png);
 
-    % 2) Temperature vs time
+   % 2) Temperature vs time (T_avg, T_min) --------------------------------
     f2 = figure; set(gcf,'Color','w'); hold on; grid off;
     title(sprintf('Case %d: Temperature vs time (%s)', k, lb));
 
     TavgC = R.Tavg - 273.15;
-    TmaxC = R.Tmax - 273.15;
+    TminC = R.Tmin - 273.15;
 
-    plot(R.t, TavgC, '-',  'LineWidth',1.6, 'Color', colTavg);
-    plot(R.t, TmaxC, '-', 'LineWidth',1.4, 'Color', colTmax);
+    plot(R.t, TavgC, '-',  'LineWidth',1.6, 'Color', colTmax);   % 파란색
+    plot(R.t, TminC, '-', 'LineWidth',1.4, 'Color', colTavg);   % 여기 colTmax를 Tmin용으로 재사용 or 다른 색으로 바꿔도 됨
 
     xlabel('t (s)');
     ylabel('Temperature (°C)');
-    legend({'T_{avg}','T_{max}'}, 'Location','best');
+    legend({'T_{avg}','T_{min}'}, 'Location','best');
 
     ax = gca;
     ax.XColor = 'k';
@@ -393,6 +393,7 @@ for k = 1:Ncase
 
     out_png = fullfile(fig_out_dir, sprintf('case%02d_temperature.png', k));
     export_png(f2, out_png);
+
 
     % 3) Anode potential vs time
     f3 = figure; set(gcf,'Color','w'); hold on; grid off;
@@ -431,18 +432,24 @@ end
 
 %% =========================================================================
 % 5-A-Extra) Stage별 baseline(MSCC4, pulse OFF) vs best1 비교 플롯
+%            (T_avg + T_min 모두)
 % =========================================================================
 
-fprintf('\n[FIG] Baseline vs Best1 comparison plots 생성 중...\n');
+fprintf('\n[FIG] Baseline vs Best1 comparison plots (T_{avg} & T_{min}) 생성 중...\n');
+
+% line style 규칙
+lsBase = '-';     % Baseline: 실선
+lsBest = '--';    % Best1    : 점선
 
 unique_stage = unique([Rcase.stage]);
 
 for s = unique_stage
-    % --- 해당 stage의 best1 찾기 ---
-    idx_s   = find([Rcase.stage] == s);
-    Rs      = Rcase(idx_s);
-    kinds   = string({Rs.kind});
-    dpl     = [Rs.dplat];
+
+    % --- 해당 stage의 best1 찾기 -----------------------------------------
+    idx_s = find([Rcase.stage] == s);
+    Rs    = Rcase(idx_s);
+    kinds = string({Rs.kind});
+    dpl   = [Rs.dplat];
 
     best_idx_raw = find(kinds == "best");
     if isempty(best_idx_raw)
@@ -450,86 +457,121 @@ for s = unique_stage
         continue;
     end
 
-    % dplat 최소가 best1
-    [~, ord_b]     = min(dpl(best_idx_raw));
-    best1_localIdx = best_idx_raw(ord_b);
-    Rb1            = Rs(best1_localIdx);   % best1 결과
+    % dplat 최소 → best1
+    [~, loc_min]     = min(dpl(best_idx_raw));
+    best1_localIdx   = best_idx_raw(loc_min);
+    Rb1              = Rs(best1_localIdx);
 
-    % baseline: R_base (pulse OFF)
+    % baseline: pulse OFF MSCC4
     R0 = R_base;
 
-    % 색상 규칙
-    col_base = [116,118,120]/255;     % baseline = 회색
-    col_best = [0,115,194]/255;       % best1 = 파랑 (colBest1)
-
-    %% ---------------------- Voltage / Current ---------------------------
+    %% =====================================================================
+    % 1) V / I 비교
+    %% =====================================================================
     f1 = figure; set(gcf,'Color','w'); hold on; grid off;
     title(sprintf('Stage %d: Baseline vs Best1 — Voltage / Current', s));
 
     yyaxis left;
-    plot(R0.t,  R0.E, '-', 'LineWidth',1.3, 'Color',col_base);
-    plot(Rb1.t, Rb1.E,'-', 'LineWidth',1.6, 'Color',col_best);
+    plot(R0.t,  R0.E,  'LineStyle',lsBase, 'LineWidth',1.3, 'Color',colV);
+    plot(Rb1.t, Rb1.E, 'LineStyle',lsBest, 'LineWidth',1.6, 'Color',colV);
     ylabel('E_{cell} (V)');
 
     yyaxis right;
-    plot(R0.t,  R0.I, '--','LineWidth',1.2,'Color',col_base);
-    plot(Rb1.t, Rb1.I,'--','LineWidth',1.4,'Color',col_best);
+    plot(R0.t,  R0.I,  'LineStyle',lsBase, 'LineWidth',1.2, 'Color',colI);
+    plot(Rb1.t, Rb1.I, 'LineStyle',lsBest, 'LineWidth',1.4, 'Color',colI);
     ylabel('I_{cell} (A)');
 
     xlabel('t (s)');
     legend({'Baseline V','Best1 V','Baseline I','Best1 I'}, ...
-        'Location','bestoutside');
+           'Location','bestoutside');
+
+    ax = gca;
+    ax.XColor         = 'k';
+    ax.YAxis(1).Color = 'k';
+    ax.YAxis(2).Color = 'k';
 
     export_png(f1, fullfile(fig_out_dir, ...
-        sprintf('stage%d_baseline_vs_best1_VI.png',s)));
+        sprintf('stage%d_baseline_vs_best1_VI.png', s)));
 
-    %% ---------------------- Temperature --------------------------------
+    %% =====================================================================
+    % 2) Temperature (T_avg + T_min)
+    %% =====================================================================
     f2 = figure; set(gcf,'Color','w'); hold on; grid off;
-    title(sprintf('Stage %d: Baseline vs Best1 — Temperature', s));
+    title(sprintf('Stage %d: Baseline vs Best1 — T_{avg} & T_{min}', s));
 
-    plot(R0.t,  R0.Tavg-273.15,'-','Color',col_base,'LineWidth',1.3);
-    plot(Rb1.t, Rb1.Tavg-273.15,'-','Color',col_best,'LineWidth',1.6);
+    % Baseline
+    Tavg0 = R0.Tavg - 273.15;
+    Tmin0 = R0.Tmin - 273.15;
 
-    plot(R0.t,  R0.Tmax-273.15,'--','Color',col_base,'LineWidth',1.2);
-    plot(Rb1.t, Rb1.Tmax-273.15,'--','Color',col_best,'LineWidth',1.4);
+    % Best1
+    Tavg1 = Rb1.Tavg - 273.15;
+    Tmin1 = Rb1.Tmin - 273.15;
+
+    % Baseline T_avg = 파랑 실선
+    plot(R0.t,  Tavg0, 'LineStyle',lsBase, 'LineWidth',1.4, 'Color',colTavg);
+    % Best1 T_avg = 파랑 점선
+    plot(Rb1.t, Tavg1, 'LineStyle',lsBest, 'LineWidth',1.6, 'Color',colTavg);
+
+    % Baseline T_min = 빨강 실선
+    plot(R0.t,  Tmin0, 'LineStyle',lsBase, 'LineWidth',1.4, 'Color',colTmax);
+    % Best1 T_min = 빨강 점선
+    plot(Rb1.t, Tmin1, 'LineStyle',lsBest, 'LineWidth',1.6, 'Color',colTmax);
 
     xlabel('t (s)');
     ylabel('Temperature (°C)');
-    legend({'Baseline Tavg','Best1 Tavg','Baseline Tmax','Best1 Tmax'},...
-        'Location','bestoutside');
+    legend({'Baseline T_{avg}','Best1 T_{avg}', ...
+            'Baseline T_{min}','Best1 T_{min}'}, ...
+            'Location','bestoutside');
+
+    ax = gca;
+    ax.XColor = 'k';
+    ax.YColor = 'k';
 
     export_png(f2, fullfile(fig_out_dir, ...
-        sprintf('stage%d_baseline_vs_best1_T.png',s)));
+        sprintf('stage%d_baseline_vs_best1_T_all.png', s)));
 
-    %% ---------------------- Anode potential ----------------------------
+    %% =====================================================================
+    % 3) Anode potential
+    %% =====================================================================
     f3 = figure; set(gcf,'Color','w'); hold on; grid off;
     title(sprintf('Stage %d: Baseline vs Best1 — Anode Potential', s));
 
-    plot(R0.t,  R0.vdiff, '-', 'Color',col_base,'LineWidth',1.3);
-    plot(Rb1.t, Rb1.vdiff,'-', 'Color',col_best,'LineWidth',1.6);
+    plot(R0.t,  R0.vdiff, 'LineStyle',lsBase, 'Color',colAn, 'LineWidth',1.3);
+    plot(Rb1.t, Rb1.vdiff,'LineStyle',lsBest, 'Color',colAn, 'LineWidth',1.6);
 
     xlabel('t (s)');
     ylabel('Anode potential (V)');
     legend({'Baseline','Best1'}, 'Location','bestoutside');
 
-    export_png(f3, fullfile(fig_out_dir, ...
-        sprintf('stage%d_baseline_vs_best1_anode.png',s)));
+    ax = gca;
+    ax.XColor = 'k';
+    ax.YColor = 'k';
 
-    %% ---------------------- Plating capacity ----------------------------
+    export_png(f3, fullfile(fig_out_dir, ...
+        sprintf('stage%d_baseline_vs_best1_anode.png', s)));
+
+    %% =====================================================================
+    % 4) Plating capacity
+    %% =====================================================================
     f4 = figure; set(gcf,'Color','w'); hold on; grid off;
     title(sprintf('Stage %d: Baseline vs Best1 — Plating Capacity', s));
 
-    plot(R0.t,  R0.pc, '-', 'Color',col_base,'LineWidth',1.3);
-    plot(Rb1.t, Rb1.pc,'-', 'Color',col_best,'LineWidth',1.6);
+    plot(R0.t,  R0.pc, 'LineStyle',lsBase, 'Color',colPc, 'LineWidth',1.3);
+    plot(Rb1.t, Rb1.pc,'LineStyle',lsBest, 'Color',colPc, 'LineWidth',1.6);
 
     xlabel('t (s)');
     ylabel('plating\_cap (Ah/m^2)');
     legend({'Baseline','Best1'}, 'Location','bestoutside');
 
+    ax = gca;
+    ax.XColor = 'k';
+    ax.YColor = 'k';
+
     export_png(f4, fullfile(fig_out_dir, ...
-        sprintf('stage%d_baseline_vs_best1_plating.png',s)));
+        sprintf('stage%d_baseline_vs_best1_plating.png', s)));
 
 end
+
 
 
 % %% =========================================================================
@@ -723,6 +765,11 @@ end
 %% ======================= Local helper functions ==========================
 
 function R = run_pulse_case(model, stage_mode, duty, Tper, Irest, t_cycling, dt_out)
+    % run_pulse_case
+    %   - pulse_stage_mode, duty_cycle, pulse_period_s, I_rest (or pulse_rest_current_param_coeffi)
+    %   - t_cycling, dt_out (range(0,dt_out,t_cycling))
+
+    % ----- 파라미터 세팅 -----
     model.param.set('pulse_stage_mode', num2str(stage_mode));
     model.param.set('duty_cycle',       num2str(duty));
     model.param.set('pulse_period_s',   num2str(Tper));
@@ -748,21 +795,26 @@ function R = run_pulse_case(model, stage_mode, duty, Tper, Irest, t_cycling, dt_
 
     tlist_str = sprintf('range(0,%g,t_cycling)', dt_out);
 
-    studyTag = 'std3';   % 필요시 수정
-    dset     = 'dset37'; % 필요시 수정
+    studyTag = 'std3';   % pulse study tag
+    dset     = 'dset37'; % pulse dataset
 
     set_tlist_safe(model, studyTag, tlist_str);
 
+    % ----- 실행 -----
     model.study(studyTag).run();
 
+    % ----- 데이터 읽기 -----
+    % d1=t, d2=E, d3=I, d4=Ect, d5=T_avg, d6=T_max, d7=T_min, d8=Qh, d9=plating_cap
     expr = {'t', ...
             'E_cell', ...
             'liion.cdc1.Icell', ...
             'liion.Ect', ...
             'T_avg', ...
             'T_max', ...
+            'T_min', ...
             'liion.Qh', ...
             'plating_cap'};
+
     D = mpheval(model, expr, 'dataset', dset, 'edim', 'point', ...
                 'selection', 2, 'solnum', 'all');
 
@@ -771,15 +823,21 @@ function R = run_pulse_case(model, stage_mode, duty, Tper, Irest, t_cycling, dt_
     I    = D.d3;
     v    = D.d4;
     Tavg = toCol(D,5);
-    Tmax = toCol(D,6);
-    Qh   = toCol(D,7);
-    pc   = toCol(D,8);
+    Tmax = toCol(D,6);  %#ok<NASGU> % 필요하면 나중에 사용
+    Tmin = toCol(D,7);
+    Qh   = toCol(D,8);
+    pc   = toCol(D,9);
 
     R = struct('t',t, 'E',E, 'I',I, ...
-               'vdiff',v, 'Tavg',Tavg, 'Tmax',Tmax, ...
-               'Qh',Qh, 'pc',pc, ...
+               'vdiff',v, ...
+               'Tavg',Tavg, ...
+               'Tmax',Tmax, ...  % 구조체에는 일단 유지
+               'Tmin',Tmin, ...  % 새로 추가
+               'Qh',Qh, ...
+               'pc',pc, ...
                'label',"", 'stage',[], 'kind',"", 'dplat',[]);
 end
+
 
 function export_png(fig_handle, outpath)
     try
