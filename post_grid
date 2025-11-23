@@ -1,77 +1,67 @@
 %% =========================================================================
-% 0) Pulse Grid CSV 파일 선택
+% Pulse Grid Plot (Surface + Heatmap + Heatmap+Markers, CSV Only)
+%  - COMSOL 시뮬레이션 없음
+%  - heatmap + markers 도 "깨끗한 heatmap"이랑 같은 스타일
 % =========================================================================
 clc; clear; close all;
 
+%% 0) CSV 선택
 base_dir = 'G:\공유 드라이브\Battery Software Group (2025)\Members\최은식\COMSOL\MSCC_optimization\Pulse_opt';
 assert(isfolder(base_dir), '폴더가 존재하지 않습니다: %s', base_dir);
 
 [fn, fp] = uigetfile(fullfile(base_dir, '*.csv'), ...
                      'Pulse Grid CSV 파일을 선택하세요');
-
-if isequal(fn, 0)
+if isequal(fn,0)
     error('파일 선택이 취소되었습니다.');
 end
 
 fullpath_csv = fullfile(fp, fn);
 fprintf('선택한 CSV: %s\n', fullpath_csv);
 
-
-%% =========================================================================
-% 1) CSV 로드
-% =========================================================================
+%% 1) CSV 로드
 T = readtable(fullpath_csv);
 
-% 필수 컬럼
-stage_all = T.stage_mode;
-duty_all  = T.duty;
-Tper_all  = T.pulse_period_s;
-dplat_all = T.d_plating;    % = plating_cap - plating_cap_base
+% 필수 컬럼 (column vector로 통일)
+stage_all = T.stage_mode(:);
+duty_all  = T.duty(:);
+Tper_all  = T.pulse_period_s(:);
+dplat_all = T.d_plating(:);      % = plating_cap - plating_cap_base
 
-% (있으면 I_rest도 같이 읽자)
+% I_rest
 if ismember('I_rest', T.Properties.VariableNames)
-    Irest_all = T.I_rest;
+    Irest_all = T.I_rest(:);
 elseif ismember('Irest', T.Properties.VariableNames)
-    Irest_all = T.Irest;
+    Irest_all = T.Irest(:);
 else
     Irest_all = zeros(height(T),1);
 end
 
-% 충전시간 컬럼 (가능한 이름들 체크)
+% t_charge (있으면 사용, 없어도 무관)
 if ismember('t_charge', T.Properties.VariableNames)
-    tcharge_all = T.t_charge;
+    tcharge_all = T.t_charge(:);
 elseif ismember('t_charge_s', T.Properties.VariableNames)
-    tcharge_all = T.t_charge_s;
+    tcharge_all = T.t_charge_s(:);
 elseif ismember('tcharge', T.Properties.VariableNames)
-    tcharge_all = T.tcharge;
+    tcharge_all = T.tcharge(:);
 else
     tcharge_all = nan(height(T),1);
-    warning('t_charge 컬럼을 찾지 못했습니다. 나중 막대그래프에서 NaN이 나올 수 있습니다.');
 end
 
-% stage_mode 1~7만 사용 (0 = baseline 제외)
- %stage_list = setdiff(unique(stage_all), 0);
-stage_list = 1;
-fprintf('\n총 stage_mode (0 제외): '); disp(stage_list');
-
-%% Irest 선택
-%Irest_list = unique(Irest_all);  % 예: -1, 0, 1 전부 사용 가능
-Irest_list = 0;                % 이렇게 두면 Irest=0만 사용
+%% 2) stage / Irest 설정
+stage_list = 1;     % 보고 싶은 stage_mode
+Irest_list = 0;       % 필요하면 unique(Irest_all) 로 바꿀 수 있음
 
 fig_id = 1;
 
-% === 각 (stage, Irest)별 peak 정보 저장용 ===
+% peak 정보 (필요하면 나중에 사용)
 PEAKS = struct('stage',{},'Irest',{},'duty',{},'Tper',{}, ...
                'dplat',{},'kind',{},'tcharge',{});
 
-%% =========================================================================
-% 2) stage_mode = 1~7, Irest 별로 모든 모드 반복 (GRID + 그래프 3개만)
-% =========================================================================
+%% 3) stage, Irest 별 Grid + 그래프 3개
 for Ival = Irest_list'
-
     for mode_target = stage_list'
 
-        % ------------ (stage, Irest) subset ------------
+        % 해당 (stage, Irest) 데이터 선택
         idx = (stage_all == mode_target) & (Irest_all == Ival);
 
         duty  = duty_all(idx);
@@ -81,32 +71,30 @@ for Ival = Irest_list'
 
         fprintf('\n==============================================\n');
         fprintf('>> stage_mode = %d, Irest = %.0f 처리중...\n', mode_target, Ival);
-        fprintf('==============================================\n');
         fprintf('데이터 개수: %d\n', numel(duty));
 
         if isempty(duty)
-            warning('stage_mode %d, Irest %.0f 는 데이터가 없습니다. 스킵합니다.', ...
+            warning('stage_mode %d, Irest %.0f 는 데이터가 없습니다. 스킵.', ...
                      mode_target, Ival);
             continue;
         end
 
-        %% ----------------- 3) duty × Tper grid -----------------
+        % --- unique grid 생성 ---
         duty_u = unique(duty);
         Tper_u = unique(Tper);
-
         [DUTY, TPER] = meshgrid(duty_u, Tper_u);
 
-        Z     = nan(size(DUTY));
-        Ztchg = nan(size(DUTY));  % 필요하면 충전시간 grid도 만들 수 있음
+        Z = nan(size(DUTY));
+        Ztchg = nan(size(DUTY));
 
         for i = 1:numel(duty)
-            rr = find(Tper_u == Tper(i));
-            cc = find(duty_u == duty(i));
-            Z(rr,   cc) = dplat(i);
+            rr = (Tper_u == Tper(i));
+            cc = (duty_u == duty(i));
+            Z(rr,cc)     = dplat(i);
             Ztchg(rr,cc) = tchg(i);
         end
 
-        %% 3-1) 이 (stage, Irest) 내에서 best 2 / worst 2
+        % ----- best / worst 인덱스 -----
         Z_flat    = Z(:);
         DUTY_flat = DUTY(:);
         TPER_flat = TPER(:);
@@ -122,17 +110,15 @@ for Ival = Irest_list'
             continue;
         end
 
-        % best: Δplating 최소 2개 ( = plating 감소가 가장 좋은 지점 )
-        [~, sort_asc] = sort(Zv, 'ascend');
+        [~, sort_asc]  = sort(Zv, 'ascend');
         nb = min(2, numel(Zv));
         best_idx = sort_asc(1:nb);
 
-        % worst: Δplating 최대 2개 ( = plating 증가가 가장 나쁜 지점 )
         [~, sort_desc] = sort(Zv, 'descend');
         nw = min(2, numel(Zv));
         worst_idx = sort_desc(1:nw);
 
-        % --- PEAKS에 저장 (원하면 나중에 써먹을 수 있음) ---
+        % ----- PEAKS 구조체에 저장 -----
         for ii = 1:nb
             duty_val  = Dv(best_idx(ii));
             Tper_val  = Pv(best_idx(ii));
@@ -186,7 +172,8 @@ for Ival = Irest_list'
         end
 
         %% ----------------- 4) 3D Surface Plot -----------------
-        figure(fig_id); clf; set(gcf,'Color','w');
+        figure(fig_id); clf;
+        set(gcf,'Color','w');
         fig_id = fig_id + 1;
 
         surf(DUTY, TPER, Z, 'FaceAlpha',0.9);
@@ -196,14 +183,13 @@ for Ival = Irest_list'
         xlabel('Duty');
         ylabel('Pulse Period (s)');
         zlabel('\DeltaPlating');
-        title(sprintf('MSCC4 Pulse Grid (stage=%d, I_{rest}=%.0f)', ...
-                       mode_target, Ival));
+        title(sprintf('MSCC4 Pulse Grid (stage mode = %d)', mode_target));
 
-        set(gca,'YScale','log');
-        set(gca,'FontSize',14);
+        set(gca,'YScale','log','FontSize',14);
 
         %% ----------------- 5) Heatmap (clean) -----------------
-        figure(fig_id); clf; set(gcf,'Color','w');
+        figure(fig_id); clf;
+        set(gcf,'Color','w');
         fig_id = fig_id + 1;
 
         contourf(DUTY, TPER, Z, 40, 'LineColor','none');
@@ -211,20 +197,23 @@ for Ival = Irest_list'
 
         xlabel('Duty');
         ylabel('Pulse Period (s)');
-        title(sprintf('\\DeltaPlating Heatmap (clean, stage=%d, I_{rest}=%.0f)', ...
-                       mode_target, Ival));
+        title(sprintf('\\DeltaPlating Heatmap (stage mode = %d)', mode_target));
 
-        set(gca,'YScale','log');
-        set(gca,'FontSize',14);
+        set(gca,'YScale','log','FontSize',14);
+        axis square;  
 
-        %% ----------------- 6) Heatmap + markers ---------------
-        figure(fig_id); clf; set(gcf,'Color','w');
+
+        %% ----------------- 6) Heatmap + markers -----------------
+        figure(fig_id); clf;
+        set(gcf,'Color','w');
         fig_id = fig_id + 1;
 
+        % 깨끗한 heatmap이랑 완전히 같은 스타일로 먼저 그림
         contourf(DUTY, TPER, Z, 40, 'LineColor','none');
         colorbar;
         hold on;
 
+        % 그 위에 best / worst marker만 얹기
         hBest  = scatter(Dv(best_idx),  Pv(best_idx), 80, 'g', 'filled', ...
             'MarkerEdgeColor','k', 'DisplayName','Best (low \DeltaPlating)');
         hWorst = scatter(Dv(worst_idx), Pv(worst_idx), 60, 'r', 'filled', ...
@@ -232,11 +221,10 @@ for Ival = Irest_list'
 
         xlabel('Duty');
         ylabel('Pulse Period (s)');
-        title(sprintf('\\DeltaPlating Heatmap (markers, stage=%d, I_{rest}=%.0f)', ...
-                       mode_target, Ival));
+        title(sprintf('\\DeltaPlating Heatmap (markers, stage mode = %d)', ...
+                       mode_target));
 
-        set(gca,'YScale','log');
-        set(gca,'FontSize',14);
+        set(gca,'YScale','log','FontSize',14);
 
         legend([hBest, hWorst], ...
               {'Best (low \DeltaPlating)','Worst (high \DeltaPlating)'}, ...
@@ -244,7 +232,7 @@ for Ival = Irest_list'
 
         hold off;
 
-    end % mode_target
-end % Irest
+    end
+end
 
 fprintf('\n총 PEAKS 개수: %d\n', numel(PEAKS));
