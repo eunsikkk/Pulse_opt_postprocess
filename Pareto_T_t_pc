@@ -136,7 +136,6 @@ for k = 1:numel(DS)
     xlabel('plating\_cap (Ah/m^2)');
     ylabel('t (s)');
     zlabel('T_{avg} (°C)');
-    title(sprintf('Pareto 3D (raw ND) — plating\\_cap vs t vs T_{avg} (%s)', name));
     legend('Location','best');
 
     % ---- 공통 스타일 적용 (폰트 + box) ----
@@ -174,7 +173,6 @@ for k = 1:numel(DS)
     xlabel('plating\_cap (Ah/m^2)');
     ylabel('t (s)');
     zlabel('T_{avg} (°C)');
-    title(sprintf('Pareto 3D (feasible / infeasible) — plating\\_cap vs t vs T_{avg} (%s)', name));
     legend('Location','best');
 
     % ---- 공통 스타일 적용 (폰트 + box) ----
