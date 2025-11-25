@@ -51,6 +51,7 @@ end
 
 % stage_mode 1~7만 사용 (0 = baseline 제외)
 stage_list = 1;
+%stage_list = setdiff(unique(stage_all), 0);
 fprintf('\n총 stage_mode (0 제외): '); disp(stage_list');
 
 %% Irest 선택
@@ -261,6 +262,38 @@ fprintf('\n총 PEAKS 개수: %d\n', numel(PEAKS));
 % 4) COMSOL 모델 로드 및 모든 best/worst 포인트 시뮬 실행
 % =========================================================================
 fprintf('\n[SIM] Pulse ALL best/worst points 시뮬레이션 시작\n');
+%% ===== Debug 옵션: best1 + worst1만 선택해서 테스트하고 싶을 때 ==========
+debug_only_bestworst1 = false;   % 빠른 테스트할 때만 true
+
+if debug_only_bestworst1
+    all_stage = [PEAKS.stage];
+    all_kind  = string({PEAKS.kind});   % "best" / "worst"
+    all_dplat = [PEAKS.dplat];
+
+    keep = false(size(PEAKS));   % 남길 인덱스 마스크
+
+    stages = unique(all_stage);
+    for s = stages
+        idx_s = (all_stage == s);
+
+        % --- best1: dplat 최소 ---
+        idx_best = find(idx_s & all_kind == "best");
+        if ~isempty(idx_best)
+            [~, loc_min] = min(all_dplat(idx_best));
+            keep(idx_best(loc_min)) = true;
+        end
+
+        % --- worst1: dplat 최대 ---
+        idx_worst = find(idx_s & all_kind == "worst");
+        if ~isempty(idx_worst)
+            [~, loc_max] = max(all_dplat(idx_worst));
+            keep(idx_worst(loc_max)) = true;
+        end
+    end
+
+    PEAKS = PEAKS(keep);
+    fprintf('>> debug_only_bestworst1 = true: 각 stage별 best1 + worst1만 남김. Ncase = %d\n', numel(PEAKS));
+end
 
 import com.comsol.model.*
 import com.comsol.model.util.*
