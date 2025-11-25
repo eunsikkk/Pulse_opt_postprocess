@@ -1,9 +1,10 @@
 % =========================================================================
 % Pareto 3D (t, T_avg, plating_cap) for: CCCV + MSCC2 + MSCC4
-% - run_* 폴더에서 각 로그를 읽어서
-%   3D 파레토(최소화: t, T_avg, plating_cap) 그림 저장
-% - 그림 저장 경로: G:\...\COMSOL\Figure\pareto_YYYYMMDD_HHMMSS\pareto3D_*.png
-% - 토글: 최신 run_* 자동 선택 vs 대화형 선택 (use_latest)
+%  - run_* 폴더에서 각 로그를 읽어서
+%    3D 파레토(최소화: t, T_avg, plating_cap) 그림 저장
+%  - 그림 저장 경로:
+%    G:\...\COMSOL\Figure\pareto_YYYYMMDD_HHMMSS\pareto3D_*.png
+%  - 토글: 최신 run_* 자동 선택 vs 대화형 선택 (use_latest)
 % =========================================================================
 clc; clear; close all;
 
@@ -39,7 +40,7 @@ colV    = colYellow;  % Voltage
 colI    = colCyan;    % Current
 colAn   = colPurple;  % Anode potential
 
-% 프로토콜별 색상 (파레토/막대 등)
+% 프로토콜별 색상 (파레토/막대 등) - 여기서는 이름만 쓰지만 일단 유지
 colCCCV  = colBlue;
 colMSCC2 = colPurple;
 colMSCC4 = colRed;
@@ -87,7 +88,7 @@ DS(end+1) = struct('name','MSCC2', 't',TM2.t, 'T',TM2.T_avg, 'pc',TM2.plating_ca
 DS(end+1) = struct('name','MSCC4', 't',TM4.t, 'T',TM4.T_avg, 'pc',TM4.plating_cap, 's',TM4.s, 'color',colMSCC4);
 
 %% 4) 3D Pareto — (1) raw ND / (2) feasible + infeasible -------------------
-%  - 모든 프로토콜에서 그래프 스타일 동일 (사진처럼)
+%  - 이번엔 x축 = plating_cap, y축 = t, z축 = T_avg
 %  - 색: 전부 파란 점 + 빨간 x 만 사용 (프로토콜별 색 분리 X)
 
 for k = 1:numel(DS)
@@ -106,410 +107,72 @@ for k = 1:numel(DS)
     infeas = ~feas;
 
     % ----- Pareto 계산 (제약 안 쓰고 전체 trial 기준) --------------------
-    F = [t, Tavg, pc];             
-    mask_nd = isNondominatedND(F);   % true = non-dominated (Pareto front)
+    F = [t, Tavg, pc];              % 최소화: t, Tavg, pc (순서는 그대로)
+    mask_nd = isNondominatedND(F);  % true = non-dominated (Pareto front)
 
-    %% 4-1) Raw Pareto (제약 필터 없이 ND만 표시, 상단 행) -----------------
+    %% 4-1) Raw Pareto (제약 필터 없이 ND만 표시) -------------------------
     f_raw = figure(2000 + 2*k - 1); clf;
     set(gcf,'Color','w');
     hold on; grid on; view(45,25);
 
     % 전체 점 (연파랑 작은 점)
-    scatter3(t, pc, Tavg, 16, [0.6 0.8 1], 'filled', ...
+    % ---- 여기서 x=pc, y=t, z=Tavg 로 변경 ----
+    scatter3(pc, t, Tavg, 16, [0.6 0.8 1], 'filled', ...
         'MarkerFaceAlpha', 0.4, 'DisplayName', 'All trials');
 
     % Pareto front (진한 파랑 큰 동그라미)
-    scatter3(t(mask_nd), pc(mask_nd), Tavg(mask_nd), 40, 'o', ...
+    scatter3(pc(mask_nd), t(mask_nd), Tavg(mask_nd), 40, 'o', ...
         'MarkerEdgeColor', [0 0.3 0.8], ...
         'MarkerFaceColor', [0 0.3 0.8], ...
         'LineWidth', 1.2, ...
         'DisplayName', 'Pareto front');
 
-    xlabel('t (s)');
-    ylabel('plating\_cap (Ah/m^2)');
+    xlabel('plating\_cap (Ah/m^2)');
+    ylabel('t (s)');
     zlabel('T_{avg} (°C)');
-    title(sprintf('Pareto 3D (raw ND) — t vs plating\\_cap vs T_{avg} (%s)', name));
+    title(sprintf('Pareto 3D (raw ND) — plating\\_cap vs t vs T_{avg} (%s)', name));
     legend('Location','bestoutside');
 
-    out_raw = fullfile(fig_out_dir, sprintf('pareto3D_%s_rawND.png', name));
+    out_raw = fullfile(fig_out_dir, sprintf('pareto3D_%s_rawND_swapAxes.png', name));
     export_png(f_raw, out_raw);
     fprintf('Saved: %s\n', out_raw);
 
-    %% 4-2) Feasible / infeasible + Pareto (하단 행) -----------------------
+    %% 4-2) Feasible / infeasible + Pareto --------------------------------
     f_feas = figure(2000 + 2*k); clf;
     set(gcf,'Color','w');
     hold on; grid on; view(45,25);
 
     % infeasible: 빨간 x
-    scatter3(t(infeas), pc(infeas), Tavg(infeas), 22, ...
+    scatter3(pc(infeas), t(infeas), Tavg(infeas), 22, ...
         [0.9 0.3 0.3], 'x', 'LineWidth', 1.2, ...
         'DisplayName', 'Infeasible');
 
     % feasible: 파란 점
-    scatter3(t(feas), pc(feas), Tavg(feas), 20, ...
+    scatter3(pc(feas), t(feas), Tavg(feas), 20, ...
         [0.2 0.5 1], 'o', 'filled', ...
         'MarkerFaceAlpha', 0.4, ...
         'DisplayName', 'Feasible');
 
     % Pareto front (여기도 강조 – 진한 파랑)
-    scatter3(t(mask_nd), pc(mask_nd), Tavg(mask_nd), 45, 'o', ...
+    scatter3(pc(mask_nd), t(mask_nd), Tavg(mask_nd), 45, 'o', ...
         'MarkerEdgeColor', [0 0.2 0.8], ...
         'MarkerFaceColor', [0 0.2 0.8], ...
         'LineWidth', 1.4, ...
         'DisplayName', 'Pareto front');
 
-    xlabel('t (s)');
-    ylabel('plating\_cap (Ah/m^2)');
+    xlabel('plating\_cap (Ah/m^2)');
+    ylabel('t (s)');
     zlabel('T_{avg} (°C)');
-    title(sprintf('Pareto 3D (feasible / infeasible) — t vs plating\\_cap vs T_{avg} (%s)', name));
+    title(sprintf('Pareto 3D (feasible / infeasible) — plating\\_cap vs t vs T_{avg} (%s)', name));
     legend('Location','bestoutside');
 
-    out_feas = fullfile(fig_out_dir, sprintf('pareto3D_%s_feasible.png', name));
+    out_feas = fullfile(fig_out_dir, sprintf('pareto3D_%s_feasible_swapAxes.png', name));
     export_png(f_feas, out_feas);
     fprintf('Saved: %s\n', out_feas);
 
 end
 
-%% ====================== 최적 C-rate 시뮬레이션 ============================
-fprintf('\n[SIM] 최적 C-rate 시뮬레이션 (liion.Ect) 시작\n');
 
-import com.comsol.model.*
-import com.comsol.model.util.*
-ModelUtil.showProgress(true);
-
-% 5.1) 최적해 요약 MAT 로드
-summary_mat = pick_one_file(run_dir, 'run_summary_*.mat');
-S = load(summary_mat);
-
-% --- 최적 C-rate (전부 summary에서 읽음) ----------------------------------
-C_cccv  = S.optimal_C_rate;        % scalar
-C_mscc2 = S.optimal_C_mscc2(:).';  % [C12 C3456]
-C_mscc4 = S.optimal_C_mscc4(:).';  % [C1 C2 C34 C56]
-
-% --- 각 프로토콜별 최적 충전 시간 [s] ------------------------------------
-t_cccv  = S.cccv_min_t;
-t_mscc2 = S.mscc2_min_t;
-t_mscc4 = S.mscc4_min_t;
-
-% 5.2) 모델 로드 ------------------------------------------------------------
-filepath = 'G:\공유 드라이브\Battery Software Group (2025)\Members\최은식\COMSOL';
-filename = 'ES_MSCCPC_Final.mph';
-full_path = fullfile(filepath, filename);
-assert(isfile(full_path),'mph 파일 없음: %s', full_path);
-model = mphload(full_path);
-
-% 5.4) 실행 (프로토콜당 1회 실행, tlist = range(0,10,t_cycling))
-fprintf('\n[SIM] Running CCCV...\n');
-R_cccv  = run_and_eval('CCCV',  model, C_cccv,  t_cccv);
-
-fprintf('\n[SIM] Running MSCC2...\n');
-R_mscc2 = run_and_eval('MSCC2', model, C_mscc2, t_mscc2);
-
-fprintf('\n[SIM] Running MSCC4...\n');
-R_mscc4 = run_and_eval('MSCC4', model, C_mscc4, t_mscc4);
-
-%% 프로토콜 리스트 (이후 플롯용) -------------------------------------------
-PROT = struct('name',{},'R',{},'color',{});
-PROT(end+1) = struct('name','CCCV',  'R',R_cccv,  'color',colCCCV);
-PROT(end+1) = struct('name','MSCC2', 'R',R_mscc2, 'color',colMSCC2);
-PROT(end+1) = struct('name','MSCC4', 'R',R_mscc4, 'color',colMSCC4);
-
-%% 5.1) Figure 1 — 전압/전류 vs time (yyaxis, 색 = 물리량 기준) -------------
-f1 = figure(4101); clf; set(gcf,'Color','w'); hold on; grid off;
-title('Voltage & Current vs time (Optimal C)');
-
-% 프로토콜별 line style 지정
-ls_CCCV  = '-';
-ls_MSCC2 = '--';
-ls_MSCC4 = ':';
-
-yyaxis left;
-plot(R_cccv.t,  R_cccv.E,  'LineStyle',ls_CCCV,  'LineWidth',1.5, 'Color',colV);
-plot(R_mscc2.t, R_mscc2.E, 'LineStyle',ls_MSCC2, 'LineWidth',1.5, 'Color',colV);
-plot(R_mscc4.t, R_mscc4.E, 'LineStyle',ls_MSCC4, 'LineWidth',1.5, 'Color',colV);
-ylabel('E_{cell} (V)');
-
-yyaxis right;
-plot(R_cccv.t,  R_cccv.I,  'LineStyle',ls_CCCV,  'LineWidth',1.2, 'Color',colI);
-plot(R_mscc2.t, R_mscc2.I, 'LineStyle',ls_MSCC2, 'LineWidth',1.2, 'Color',colI);
-plot(R_mscc4.t, R_mscc4.I, 'LineStyle',ls_MSCC4, 'LineWidth',1.2, 'Color',colI);
-ylabel('I_{cell} (A)');
-
-xlabel('t (s)');
-legend({'E CCCV','E MSCC2','E MSCC4', ...
-        'I CCCV','I MSCC2','I MSCC4'}, ...
-        'Location','bestoutside');
-
-ax = gca;
-ax.XColor      = 'k';
-ax.YAxis(1).Color = 'k';
-ax.YAxis(2).Color = 'k';
-
-export_png(f1, fullfile(fig_out_dir, 'timeseries_voltage_current.png'));
-
-%% 5.2) Figure 2 — Anode potential vs time (색 = 보라) ----------------------
-f2 = figure(4102); clf; set(gcf,'Color','w'); hold on; grid off;
-plot(R_cccv.t,  R_cccv.vdiff,  'LineStyle',ls_CCCV,  'LineWidth',1.6, 'Color',colAn);
-plot(R_mscc2.t, R_mscc2.vdiff, 'LineStyle',ls_MSCC2, 'LineWidth',1.6, 'Color',colAn);
-plot(R_mscc4.t, R_mscc4.vdiff, 'LineStyle',ls_MSCC4, 'LineWidth',1.6, 'Color',colAn);
-xlabel('t (s)');
-ylabel('Anode potential (V)');
-title('Anode potential vs time (Optimal C)');
-legend({'CCCV','MSCC2','MSCC4'}, 'Location','bestoutside');
-
-ax = gca;
-ax.XColor = 'k';
-ax.YColor = 'k';
-
-export_png(f2, fullfile(fig_out_dir, 'timeseries_anode_potential.png'));
-
-%% 5.3) Figure 3 — T_{avg}, T_{max} vs time [°C] ---------------------------
-f3 = figure(4103); clf; set(gcf,'Color','w'); hold on; grid off;
-
-TavgC_cccv  = R_cccv.Tavg  - 273.15;
-TavgC_mscc2 = R_mscc2.Tavg - 273.15;
-TavgC_mscc4 = R_mscc4.Tavg - 273.15;
-
-TmaxC_cccv  = R_cccv.Tmax  - 273.15;
-TmaxC_mscc2 = R_mscc2.Tmax - 273.15;
-TmaxC_mscc4 = R_mscc4.Tmax - 273.15;
-
-% T_avg (파랑, line style로 프로토콜 구분)
-plot(R_cccv.t,  TavgC_cccv,  'LineStyle',ls_CCCV,  'LineWidth',1.6, 'Color',colTavg);
-plot(R_mscc2.t, TavgC_mscc2, 'LineStyle',ls_MSCC2, 'LineWidth',1.6, 'Color',colTavg);
-plot(R_mscc4.t, TavgC_mscc4, 'LineStyle',ls_MSCC4, 'LineWidth',1.6, 'Color',colTavg);
-
-% T_max (빨강, 동일 style)
-plot(R_cccv.t,  TmaxC_cccv,  'LineStyle',ls_CCCV,  'LineWidth',1.4, 'Color',colTmax);
-plot(R_mscc2.t, TmaxC_mscc2, 'LineStyle',ls_MSCC2, 'LineWidth',1.4, 'Color',colTmax);
-plot(R_mscc4.t, TmaxC_mscc4, 'LineStyle',ls_MSCC4, 'LineWidth',1.4, 'Color',colTmax);
-
-xlabel('t (s)');
-ylabel('Temperature (°C)');
-title('Temperature vs time (Optimal C)');
-legend({'T_{avg} CCCV','T_{avg} MSCC2','T_{avg} MSCC4', ...
-        'T_{max} CCCV','T_{max} MSCC2','T_{max} MSCC4'}, ...
-        'Location','bestoutside');
-
-ax = gca;
-ax.XColor = 'k';
-ax.YColor = 'k';
-
-export_png(f3, fullfile(fig_out_dir, 'timeseries_temperature.png'));
-
-%% 5.4) Voltage & Current vs time — 프로토콜별 개별 플롯 -------------------
-for k = 1:numel(PROT)
-    P = PROT(k);
-    R = P.R;
-
-    fV = figure(4200+k); clf;
-    set(gcf,'Color','w');
-    grid off; hold on;
-
-    title(sprintf('Voltage & Current vs time (Optimal C, %s)', P.name));
-
-    yyaxis left;
-    plot(R.t, R.E, '-', 'LineWidth',1.5, 'Color',colV);
-    ylabel('E_{cell} (V)');
-
-    yyaxis right;
-    plot(R.t, R.I, '--', 'LineWidth',1.2, 'Color',colI);
-    ylabel('I_{cell} (A)');
-
-    xlabel('t (s)');
-    legend({'E_{cell}','I_{cell}'}, 'Location','best');
-
-    ax = gca;
-    ax.XColor        = 'k';
-    ax.YAxis(1).Color = 'k';
-    ax.YAxis(2).Color = 'k';
-
-    hold off;
-
-    out_png = fullfile(fig_out_dir, ...
-        sprintf('timeseries_voltage_current_%s.png', P.name));
-    export_png(fV, out_png);
-end
-
-%% 5.5) Temperature vs time — 프로토콜별 개별 플롯 -------------------------
-for k = 1:numel(PROT)
-    P = PROT(k);
-    R = P.R;
-
-    TavgC = R.Tavg - 273.15;
-    TmaxC = R.Tmax - 273.15;
-
-    fT = figure(4300+k); clf;
-    set(gcf,'Color','w');
-    grid off; hold on;
-
-    title(sprintf('Temperature vs time (Optimal C, %s)', P.name));
-
-    plot(R.t, TavgC, '-',  'LineWidth',1.6, 'Color',colTavg); % T_avg = blue
-    plot(R.t, TmaxC, '--', 'LineWidth',1.4, 'Color',colTmax); % T_max = red
-
-    xlabel('t (s)');
-    ylabel('Temperature (°C)');
-    legend({'T_{avg}','T_{max}'}, 'Location','best');
-
-    ax = gca;
-    ax.XColor = 'k';
-    ax.YColor = 'k';
-
-    hold off;
-
-    out_png = fullfile(fig_out_dir, ...
-        sprintf('timeseries_temperature_%s.png', P.name));
-    export_png(fT, out_png);
-end
-
-%% 5.6) Anode potential vs time — 프로토콜별 개별 플롯 ----------------------
-for k = 1:numel(PROT)
-    P = PROT(k);
-    R = P.R;
-
-    fA = figure(4400+k); clf;
-    set(gcf,'Color','w');
-    grid off; hold on;
-
-    plot(R.t, R.vdiff, 'LineWidth',1.6, 'Color',colAn);
-
-    xlabel('t (s)');
-    ylabel('Anode potential (V)');
-    title(sprintf('Anode potential vs time (Optimal C, %s)', P.name));
-    legend({P.name}, 'Location','best');
-
-    ax = gca;
-    ax.XColor = 'k';
-    ax.YColor = 'k';
-
-    hold off;
-
-    out_png = fullfile(fig_out_dir, ...
-        sprintf('timeseries_anode_potential_%s.png', P.name));
-    export_png(fA, out_png);
-end
-
-%% 5.7) Thermal load metrics — ∫ΔT dt, ∫Qh dt per protocol -----------------
-nP     = numel(PROT);
-names  = {PROT.name};
-colors = [colCCCV; colMSCC2; colMSCC4];
-
-J_T = zeros(nP,1);   % ∫ΔT dt
-J_Q = zeros(nP,1);   % ∫Qh dt
-
-for k = 1:nP
-    R = PROT(k).R;
-
-    t    = R.t(:);
-    Tavg = R.Tavg(:);
-    Qh   = R.Qh(:);
-
-    T_init = Tavg(1);
-    dT = Tavg - T_init;
-    J_T(k) = trapz(t, dT);
-    J_Q(k) = trapz(t, Qh);
-end
-
-% --- (1) ∫ΔT dt bar plot --------------------------------------------------
-fDT = figure(4501); clf; set(gcf,'Color','w');
-b1 = bar(J_T);
-b1.FaceColor = 'flat';
-for k = 1:nP
-    b1.CData(k,:) = colors(k,:);
-end
-grid off;
-
-xticks(1:nP);
-xticklabels(names);
-xlabel('Protocol');
-ylabel('\int \DeltaT_{avg}(t)\, dt  (°C·s)');
-title('Thermal burden: \int (T_{avg}(t) - T_{init}) dt (Optimal C)');
-set(gca,'FontSize',11);
-
-out_DT = fullfile(fig_out_dir, 'thermal_JT_integral_deltaTavg.png');
-export_png(fDT, out_DT);
-fprintf('Saved: %s\n', out_DT);
-
-% --- (2) ∫Qh dt bar plot --------------------------------------------------
-fQh = figure(4502); clf; set(gcf,'Color','w');
-b2 = bar(J_Q);
-b2.FaceColor = 'flat';
-for k = 1:nP
-    b2.CData(k,:) = colors(k,:);
-end
-grid off;
-
-xticks(1:nP);
-xticklabels(names);
-xlabel('Protocol');
-ylabel('\int Q_h(t)\, dt  (J/m^3)');
-title('Total heat generation: \int Q_h(t) dt (Optimal C)');
-set(gca,'FontSize',11);
-
-out_Qh = fullfile(fig_out_dir, 'thermal_JQ_integral_Qh.png');
-export_png(fQh, out_Qh);
-fprintf('Saved: %s\n', out_Qh);
-
-%% 5.8) plating_cap vs time — 프로토콜별 개별 플롯 --------------------------
-for k = 1:numel(PROT)
-    P = PROT(k);
-    R = P.R;
-
-    fP = figure(4600+k); clf;
-    set(gcf,'Color','w');
-    grid off; hold on;
-
-    plot(R.t, R.pc, 'LineWidth',1.6, 'Color',colPc);
-
-    xlabel('t (s)');
-    ylabel('plating\_cap (Ah/m^2)');
-    title(sprintf('Plating capacity vs time (Optimal C, %s)', P.name));
-    legend({P.name}, 'Location','best');
-
-    ax = gca;
-    ax.XColor = 'k';
-    ax.YColor = 'k';
-
-    out_png = fullfile(fig_out_dir, ...
-        sprintf('timeseries_platingcap_%s.png', P.name));
-    export_png(fP, out_png);
-end
-%% 5.10) Charge time comparison — CCCV vs MSCC2 vs MSCC4 (from simulation)
-
-times  = [R_cccv.t(end); ...
-          R_mscc2.t(end); ...
-          R_mscc4.t(end)];
-
-labels = {'CCCV','MSCC2','MSCC4'};
-
-% 프로토콜 고정 팔레트 색상
-bar_colors = [colCCCV; colMSCC2; colMSCC4];
-
-fTcmp = figure(4800); clf;
-set(gcf,'Color','w');
-
-b = bar(times);
-b.FaceColor = 'flat';
-for i = 1:numel(times)
-    b.CData(i,:) = bar_colors(i,:);
-end
-
-grid off;
-xticks(1:3);
-xticklabels(labels);
-xlabel('Protocol');
-ylabel('Charge time (s)');
-title('Charge time comparison');
-
-ax = gca;
-ax.XColor = 'k';
-ax.YColor = 'k';
-set(ax,'FontSize',11);
-
-out_cmp = fullfile(fig_out_dir, 'charge_time_comparison_fromSim.png');
-export_png(fTcmp, out_cmp);
-fprintf('Saved: %s\n', out_cmp);
 
 %% ======================= Local helper functions ==========================
 function fpath = pick_one_file(folder, pattern)
@@ -533,106 +196,18 @@ function export_png(fig_handle, outpath)
 end
 
 function mask_nd = isNondominatedND(F)
+    % F: [N x M] (여기선 M=3: [t, Tavg, pc], 모두 "minimize" 기준)
     N = size(F,1);
     mask_nd = true(N,1);
     for i = 1:N
         if ~mask_nd(i), continue; end
         for j = 1:N
             if i==j, continue; end
+            % j가 i를 지배(dominates)하면 i는 non-dominated 아님
             if all(F(j,:) <= F(i,:)) && any(F(j,:) < F(i,:))
                 mask_nd(i) = false;
                 break;
             end
         end
-    end
-end
-
-function R = run_and_eval(protocol, model, Cvals, t_cycling)
-    dt_out = 10;   % [s]
-
-    switch protocol
-        case 'CCCV'
-            model.param.set('C_rate', num2str(Cvals(1)));
-            studyTag = 'std1'; dset = 'dset1';
-        case 'MSCC2'   % [C12 C3456]
-            C12    = Cvals(1);
-            C3456  = Cvals(2);
-            model.param.set('first_MSCC_Crate',  num2str(C12));
-            model.param.set('second_MSCC_Crate', num2str(C12));
-            model.param.set('third_MSCC_Crate',  num2str(C3456));
-            model.param.set('fourth_MSCC_Crate', num2str(C3456));
-            model.param.set('fifth_MSCC_Crate',  num2str(C3456));
-            model.param.set('sixth_MSCC_Crate',  num2str(C3456));
-            studyTag = 'std2'; dset = 'dset3';
-        case 'MSCC4'   % [C1 C2 C34 C56]
-            C1 = Cvals(1); C2 = Cvals(2); C34 = Cvals(3); C56 = Cvals(4);
-            model.param.set('first_MSCC_Crate',  num2str(C1));
-            model.param.set('second_MSCC_Crate', num2str(C2));
-            model.param.set('third_MSCC_Crate',  num2str(C34));
-            model.param.set('fourth_MSCC_Crate', num2str(C34));
-            model.param.set('fifth_MSCC_Crate',  num2str(C56));
-            model.param.set('sixth_MSCC_Crate',  num2str(C56));
-
-            model.param.set('pulse_stage_mode', '0');
-
-            studyTag = 'std2'; dset = 'dset3';
-        otherwise
-            error('Unknown protocol');
-    end
-
-    model.param.set('t_cycling', num2str(t_cycling));
-
-    tlist_str = sprintf('range(0,%g,t_cycling)', dt_out);
-    set_tlist_safe(model, studyTag, tlist_str);
-
-    model.study(studyTag).run();
-
-    expr = {'t','E_cell','liion.cdc1.Icell','liion.Ect','T_avg','T_max', ...
-            'liion.cdc1.CC_CH','liion.cdc1.CV_CH', ...
-            'liion.Qh','plating_cap'};
-    D = mpheval(model, expr, 'dataset',dset,'edim','point','selection',2,'solnum','all');
-
-    t  = D.d1;  E  = D.d2;  I  = D.d3;  v = D.d4;
-    Ta = toCol(D,5); Tm = toCol(D,6);
-    cc = D.d7;  cv = D.d8;
-    Qh = toCol(D,9);
-    pc = toCol(D,10);
-
-    idx = (cc==1) | (cv==1);
-    if ~any(idx), idx = true(size(t)); end
-
-    R = struct('t',t(idx),'E',E(idx),'I',I(idx), ...
-           'vdiff',v(idx),'Tavg',Ta(idx),'Tmax',Tm(idx), ...
-           'Qh',Qh(idx),'pc',pc(idx));
-end
-
-function col = toCol(D, k)
-    try
-        col = D.(['d' num2str(k)]);
-    catch
-        col = nan(size(D.d1));
-    end
-end
-
-function set_tlist_safe(model, studyTag, tlist_str)
-    tried = false;
-    for cand = {'time','time1','time2','step1','step2'}
-        try
-            model.study(studyTag).feature(char(cand)).set('tlist', tlist_str);
-            tried = true;
-            break;
-        catch
-        end
-    end
-    for solCand = {'sol1','sol2'}
-        for featCand = {'t1','t2','time','time1'}
-            try
-                model.sol(char(solCand)).feature(char(featCand)).set('tlist', tlist_str);
-            catch
-            end
-        end
-    end
-    if ~tried
-        warning('tlist 설정 실패: study=%s (기본 설정으로 계속 진행)', studyTag);
     end
 end
