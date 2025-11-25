@@ -55,7 +55,7 @@ stage_list = 1;
 fprintf('\n총 stage_mode (0 제외): '); disp(stage_list');
 
 %% Irest 선택
-Irest_list = 0;
+Irest_list = 1;
 
 fig_id = 1;
 
@@ -308,7 +308,7 @@ assert(isfile(full_path),'mph 파일 없음: %s', full_path);
 model = mphload(full_path);
 
 % --- Pulse OFF baseline (stage_mode = 0) 한 번 실행 ---
-dt_out_default    = 1;
+dt_out_default    = 100;
 t_cycling_default = 10000;
 
 fprintf('\n[SIM] Baseline (pulse OFF, stage_mode=0) running...\n');
@@ -765,35 +765,17 @@ end
 function R = run_pulse_case(model, stage_mode, duty, Tper, Irest, ...
                             t_cycling, dt_out, studyTag, dset)
 
-    % run_pulse_case
-    %   - pulse_stage_mode, duty_cycle, pulse_period_s, I_rest
-    %   - t_cycling, dt_out (range(0,dt_out,t_cycling))
-    %
-    %   → MSCC 스크립트와 동일하게,
-    %     liion.cdc1.CC_CH / CV_CH 가 1인 구간만 선택해서
-    %     R.t, R.E, ... 를 구성 (충전 구간만 사용)
-
     % ----- 파라미터 세팅 -----
     model.param.set('pulse_stage_mode', num2str(stage_mode));
     model.param.set('duty_cycle',       num2str(duty));
-    model.param.set('pulse_freq',       num2str(Tper));
+    model.param.set('pulse_freq',       num2str(Tper));   % 모델에서 쓰는 이름 확인 필요
 
-    tried_Irest = false;
-    try
-        model.param.set('I_rest', num2str(Irest));
-        tried_Irest = true;
-    catch
-    end
-    if ~tried_Irest
-        try
-            model.param.set('pulse_rest_current_param_coeffi', num2str(Irest));
-            tried_Irest = true;
-        catch
-        end
-    end
-    if ~tried_Irest
-        warning('I_rest 관련 파라미터 설정 실패. 모델 param 이름을 확인하세요.');
-    end
+    % === ★ 여기 중요: rest current 계수 무조건 세팅 ===
+    % CSV / PEAKS 에서 쓰는 Irest 값을 coeff로 바로 넣어버리기
+    model.param.set('pulse_rest_current_param_coeffi', num2str(Irest));
+
+    % (구버전 호환용으로 I_rest도 세팅하고 싶으면:)
+    % model.param.set('I_rest', num2str(Irest));
 
     model.param.set('t_cycling', num2str(t_cycling));
 
@@ -802,7 +784,6 @@ function R = run_pulse_case(model, stage_mode, duty, Tper, Irest, ...
 
     % ----- 실행 -----
     model.study(studyTag).run();
-
     % ----- 데이터 읽기 -----
     % d1=t, d2=E, d3=I, d4=Ect, d5=T_avg, d6=T_max, d7=T_min,
     % d8=Qh, d9=plating_cap, d10=CC_CH, d11=CV_CH
