@@ -242,9 +242,9 @@ for Ival = Irest_list'
 
         set(gca,'YScale','log');
 
-        legend([hBest, hWorst], ...
-              {'Best (low \DeltaPlating)','Worst (high \DeltaPlating)'}, ...
-               'Location','bestoutside');
+        % legend([hBest, hWorst], ...
+        %       {'Best (low \DeltaPlating)','Worst (high \DeltaPlating)'}, ...
+        %        'Location','bestoutside');
 
         apply_fig_style();
         export_png(fH2, fullfile(fileparts(fullpath_csv), ...
@@ -263,7 +263,7 @@ fprintf('\n총 PEAKS 개수: %d\n', numel(PEAKS));
 % =========================================================================
 fprintf('\n[SIM] Pulse ALL best/worst points 시뮬레이션 시작\n');
 %% ===== Debug 옵션: best1 + worst1만 선택해서 테스트하고 싶을 때 ==========
-debug_only_bestworst1 = false;   % 빠른 테스트할 때만 true
+debug_only_bestworst1 = true;   % 빠른 테스트할 때만 true
 
 if debug_only_bestworst1
     all_stage = [PEAKS.stage];
@@ -308,7 +308,7 @@ model = mphload(full_path);
 
 % --- Pulse OFF baseline (stage_mode = 0) 한 번 실행 ---
 dt_out_default    = 1;
-t_cycling_default = 2000;
+t_cycling_default = 10000;
 
 fprintf('\n[SIM] Baseline (pulse OFF, stage_mode=0) running...\n');
 R_base = run_pulse_case(model, 0, 0.5, 1.0, 0, ...
@@ -521,7 +521,7 @@ for s = unique_stage
 
     xlabel('t (s)');
     legend({'Baseline V','Best1 V','Baseline I','Best1 I'}, ...
-           'Location','bestoutside');
+           'Location','best');
 
     ax = gca;
     ax.XColor         = 'k';
@@ -563,7 +563,7 @@ for s = unique_stage
     ylabel('Temperature (°C)');
     legend({'Baseline T_{avg}','Baseline T_{min}', ...
             'Best1 T_{avg}','Best1 T_{min}'}, ...
-            'Location','bestoutside');
+            'Location','best');
 
     ax = gca;
     ax.XColor = 'k';
@@ -605,7 +605,7 @@ for s = unique_stage
 
     xlabel('t (s)');
     ylabel('plating\_cap (Ah/m^2)');
-    legend({'Baseline','Best1'}, 'Location','bestoutside');
+    legend({'Baseline','Best1'}, 'Location','best');
 
     ax = gca;
     ax.XColor = 'k';
@@ -614,6 +614,28 @@ for s = unique_stage
     apply_fig_style();
     export_png(f4, fullfile(fig_out_dir, ...
         sprintf('stage%d_baseline_vs_best1_plating.png', s)));
+
+    % ===== Charge time bar plot: Baseline vs Best1 =======================
+    t_base  = R0.t(end);   % baseline charge time [s]
+    t_best1 = Rb1.t(end);  % best1 charge time [s]
+
+    fBarBest = figure; set(gcf,'Color','w'); hold on; grid off;
+
+    vals = [t_base; t_best1];
+    b = bar(vals);
+    b.FaceColor = 'flat';
+    b.CData(1,:) = colGrey; % Baseline = 회색
+    b.CData(2,:) = colTmax; % Best1    = 팔레트 빨강
+
+    xticks(1:2);
+    xticklabels({'Baseline','Best1'});
+    xlabel('Protocol');
+    ylabel('Charge time (s)');
+
+    apply_fig_style();
+    export_png(fBarBest, fullfile(fig_out_dir, ...
+        sprintf('stage%d_charge_time_baseline_vs_best1.png', s)));
+
 
 end
 
@@ -648,7 +670,12 @@ if ~isempty(worst_idx_raw)
 
     xlabel('t (s)');
     legend({'Baseline V','Worst1 V','Baseline I','Worst1 I'}, ...
-           'Location','bestoutside');
+           'Location','best');
+
+    ax = gca;
+    ax.XColor         = 'k';
+    ax.YAxis(1).Color = 'k';
+    ax.YAxis(2).Color = 'k';
 
     apply_fig_style();
     export_png(f1w, fullfile(fig_out_dir, ...
@@ -671,7 +698,7 @@ if ~isempty(worst_idx_raw)
     ylabel('Temperature (°C)');
     legend({'Baseline T_{avg}','Baseline T_{min}', ...
             'Worst1 T_{avg}','Worst1 T_{min}'}, ...
-            'Location','bestoutside');
+            'Location','best');
 
     apply_fig_style();
     export_png(f2w, fullfile(fig_out_dir, ...
@@ -686,7 +713,7 @@ if ~isempty(worst_idx_raw)
 
     xlabel('t (s)');
     ylabel('Anode potential (V)');
-    legend({'Baseline','Worst1'}, 'Location','bestoutside');
+    legend({'Baseline','Worst1'}, 'Location','best');
 
     apply_fig_style();
     export_png(f3w, fullfile(fig_out_dir, ...
@@ -701,11 +728,33 @@ if ~isempty(worst_idx_raw)
 
     xlabel('t (s)');
     ylabel('plating\_cap (Ah/m^2)');
-    legend({'Baseline','Worst1'}, 'Location','bestoutside');
+    legend({'Baseline','Worst1'}, 'Location','best');
 
     apply_fig_style();
     export_png(f4w, fullfile(fig_out_dir, ...
         sprintf('stage%d_baseline_vs_worst1_plating.png', s)));
+
+    % ===== Charge time bar plot: Baseline vs Worst1 =====================
+    t_base   = R0.t(end);   % baseline charge time [s]
+    t_worst1 = Rw1.t(end);  % worst1 charge time [s]
+
+    fBarWorst = figure; set(gcf,'Color','w'); hold on; grid off;
+
+    vals = [t_base; t_worst1];
+    b = bar(vals);
+    b.FaceColor = 'flat';
+    b.CData(1,:) = colGrey; % Baseline = 회색
+    b.CData(2,:) = colTavg; % Worst1   = 팔레트 파랑
+
+    xticks(1:2);
+    xticklabels({'Baseline','Worst1'});
+    xlabel('Protocol');
+    ylabel('Charge time (s)');
+
+    apply_fig_style();
+    export_png(fBarWorst, fullfile(fig_out_dir, ...
+        sprintf('stage%d_charge_time_baseline_vs_worst1.png', s)));
+
 
 end
 
