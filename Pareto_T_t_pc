@@ -10,6 +10,8 @@
 %   - 축 box: 상하좌우 4줄 모두 표시 (box on)
 %   - tick / label / legend 폰트 크게 (tick=24, label=26, legend=24)
 %   - 위 설정은 apply_fig_style() 에서 자동 적용
+%   - title 은 사용하지 않고, (a) (b) (c) 텍스트로 표시
+%     CCCV -> (a), MSCC2 -> (b), MSCC4 -> (c)
 % =========================================================================
 clc; clear; close all;
 
@@ -96,6 +98,11 @@ DS(end+1) = struct('name','MSCC4', 't',TM4.t, 'T',TM4.T_avg, 'pc',TM4.plating_ca
 %  - x축 = plating_cap, y축 = t, z축 = T_avg
 %  - 색: 전부 파란 점 + 빨간 x 만 사용 (프로토콜별 색 분리 X)
 
+% 프로토콜별 subfigure 레이블 (title 대신 (a)/(b)/(c) 텍스트 사용)
+labelMap = containers.Map( ...
+    {'CCCV','MSCC2','MSCC4'}, ...
+    {'(a)','(b)','(c)'} );
+
 for k = 1:numel(DS)
 
     name = DS(k).name;
@@ -141,6 +148,15 @@ for k = 1:numel(DS)
     % ---- 공통 스타일 적용 (폰트 + box) ----
     apply_fig_style();
 
+    % ---- (a)/(b)/(c) 레이블 추가 (title 대신) ----
+    lbl = labelMap(name);
+    text(gca, 0.02, 0.96, lbl, ...
+        'Units','normalized', ...
+        'FontSize', 26, ...
+        'FontWeight','bold', ...
+        'HorizontalAlignment','left', ...
+        'VerticalAlignment','top');
+
     out_raw = fullfile(fig_out_dir, sprintf('pareto3D_%s_rawND_swapAxes.png', name));
     export_png(f_raw, out_raw);
     fprintf('Saved: %s\n', out_raw);
@@ -177,6 +193,15 @@ for k = 1:numel(DS)
 
     % ---- 공통 스타일 적용 (폰트 + box) ----
     apply_fig_style();
+
+    % ---- (a)/(b)/(c) 레이블 추가 (title 대신) ----
+    lbl = labelMap(name);
+    text(gca, 0.02, 0.96, lbl, ...
+        'Units','normalized', ...
+        'FontSize', 26, ...
+        'FontWeight','bold', ...
+        'HorizontalAlignment','left', ...
+        'VerticalAlignment','top');
 
     out_feas = fullfile(fig_out_dir, sprintf('pareto3D_%s_feasible_swapAxes.png', name));
     export_png(f_feas, out_feas);
