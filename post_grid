@@ -50,8 +50,8 @@ end
 
 %% 2) stage / Irest 설정
 
-%stage_list = unique(stage_all(:)); 
-stage_list = 7;     % 보고 싶은 stage_mode (1~7 쓰려면 1:7 로 변경)
+stage_list = unique(stage_all(:)); 
+%stage_list = 7;     % 보고 싶은 stage_mode (1~7 쓰려면 1:7 로 변경)
 Irest_list = 1;     % 필요하면 unique(Irest_all) 로 바꿀 수 있음
 
 fig_id = 1;
