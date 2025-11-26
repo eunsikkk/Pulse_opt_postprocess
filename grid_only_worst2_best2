@@ -1,0 +1,291 @@
+%% =========================================================================
+% Pulse Grid Plot (Surface + Heatmap + Heatmap+Markers, CSV Only)
+%  - COMSOL 시뮬레이션 없음
+%  - heatmap + markers 도 "깨끗한 heatmap"이랑 같은 스타일
+%  - stage 1~7 에 대해 (a)~(g) 레이블 부여 (3개 plot 모두 동일 문자)
+% =========================================================================
+clc; clear; close all;
+
+%% 0) CSV 선택
+base_dir = 'G:\공유 드라이브\Battery Software Group (2025)\Members\최은식\COMSOL\MSCC_optimization\Pulse_opt';
+assert(isfolder(base_dir), '폴더가 존재하지 않습니다: %s', base_dir);
+
+[fn, fp] = uigetfile(fullfile(base_dir, '*.csv'), ...
+                     'Pulse Grid CSV 파일을 선택하세요');
+if isequal(fn,0)
+    error('파일 선택이 취소되었습니다.');
+end
+
+fullpath_csv = fullfile(fp, fn);
+fprintf('선택한 CSV: %s\n', fullpath_csv);
+
+%% 1) CSV 로드
+T = readtable(fullpath_csv);
+
+% 필수 컬럼 (column vector로 통일)
+stage_all = T.stage_mode(:);
+duty_all  = T.duty(:);
+Tper_all  = T.pulse_period_s(:);
+dplat_all = T.d_plating(:);      % = plating_cap - plating_cap_base
+
+% I_rest
+if ismember('I_rest', T.Properties.VariableNames)
+    Irest_all = T.I_rest(:);
+elseif ismember('Irest', T.Properties.VariableNames)
+    Irest_all = T.Irest(:);
+else
+    Irest_all = zeros(height(T),1);
+end
+
+% t_charge (있으면 사용, 없어도 무관)
+if ismember('t_charge', T.Properties.VariableNames)
+    tcharge_all = T.t_charge(:);
+elseif ismember('t_charge_s', T.Properties.VariableNames)
+    tcharge_all = T.t_charge_s(:);
+elseif ismember('tcharge', T.Properties.VariableNames)
+    tcharge_all = T.tcharge(:);
+else
+    tcharge_all = nan(height(T),1);
+end
+
+%% 2) stage / Irest 설정
+
+stage_list = unique(stage_all(:)); 
+%stage_list = 7;     % 보고 싶은 stage_mode (1~7 쓰려면 1:7 로 변경)
+Irest_list = 1;     % 필요하면 unique(Irest_all) 로 바꿀 수 있음
+
+fig_id = 1;
+
+% peak 정보 (필요하면 나중에 사용)
+PEAKS = struct('stage',{},'Irest',{},'duty',{},'Tper',{}, ...
+               'dplat',{},'kind',{},'tcharge',{});
+
+% ====== stage별 레이블 매핑 (1~7 → (a)~(g)) ==============================
+subLabelFS = 26;  % 서브피겨 레이블 폰트 크기
+stageLabelMap = containers.Map( ...
+    num2cell(1:7), ...
+    {'(a)','(b)','(c)','(d)','(e)','(f)','(g)'} );
+% ==========================================================================
+
+%% 3) stage, Irest 별 Grid + 그래프 3개
+for Ival = Irest_list'
+    for mode_target = stage_list'
+
+        % 해당 (stage, Irest) 데이터 선택
+        idx = (stage_all == mode_target) & (Irest_all == Ival);
+
+        duty  = duty_all(idx);
+        Tper  = Tper_all(idx);
+        dplat = dplat_all(idx);
+        tchg  = tcharge_all(idx);
+
+        fprintf('\n==============================================\n');
+        fprintf('>> stage_mode = %d, Irest = %.0f 처리중...\n', mode_target, Ival);
+        fprintf('데이터 개수: %d\n', numel(duty));
+
+        if isempty(duty)
+            warning('stage_mode %d, Irest %.0f 는 데이터가 없습니다. 스킵.', ...
+                     mode_target, Ival);
+            continue;
+        end
+
+        % --- unique grid 생성 ---
+        duty_u = unique(duty);
+        Tper_u = unique(Tper);
+        [DUTY, TPER] = meshgrid(duty_u, Tper_u);
+
+        Z = nan(size(DUTY));
+        Ztchg = nan(size(DUTY));
+
+        for i = 1:numel(duty)
+            rr = (Tper_u == Tper(i));
+            cc = (duty_u == duty(i));
+            Z(rr,cc)     = dplat(i);
+            Ztchg(rr,cc) = tchg(i);
+        end
+
+        % ----- best / worst 인덱스 -----
+        Z_flat    = Z(:);
+        DUTY_flat = DUTY(:);
+        TPER_flat = TPER(:);
+
+        valid = ~isnan(Z_flat);
+        Zv = Z_flat(valid);
+        Dv = DUTY_flat(valid);
+        Pv = TPER_flat(valid);
+
+        if numel(Zv) < 2
+            warning('stage_mode %d, Irest %.0f: 유효 Z 포인트 < 2, peak 스킵.', ...
+                     mode_target, Ival);
+            continue;
+        end
+
+        [~, sort_asc]  = sort(Zv, 'ascend');
+        nb = min(2, numel(Zv));
+        best_idx = sort_asc(1:nb);
+
+        [~, sort_desc] = sort(Zv, 'descend');
+        nw = min(2, numel(Zv));
+        worst_idx = sort_desc(1:nw);
+
+        % ----- PEAKS 구조체에 저장 -----
+        for ii = 1:nb
+            duty_val  = Dv(best_idx(ii));
+            Tper_val  = Pv(best_idx(ii));
+            dplat_val = Zv(best_idx(ii));
+
+            row = find(stage_all == mode_target & ...
+                       abs(Irest_all - Ival)    < 1e-12 & ...
+                       abs(duty_all  - duty_val)< 1e-12 & ...
+                       abs(Tper_all  - Tper_val)< 1e-12 & ...
+                       abs(dplat_all - dplat_val)<1e-12, 1);
+            if isempty(row)
+                tcharge_val = NaN;
+            else
+                tcharge_val = tcharge_all(row);
+            end
+
+            PEAKS(end+1) = struct( ...
+                'stage',   mode_target, ...
+                'Irest',   Ival, ...
+                'duty',    duty_val, ...
+                'Tper',    Tper_val, ...
+                'dplat',   dplat_val, ...
+                'kind',    "best", ...
+                'tcharge', tcharge_val);
+        end
+
+        for ii = 1:nw
+            duty_val  = Dv(worst_idx(ii));
+            Tper_val  = Pv(worst_idx(ii));
+            dplat_val = Zv(worst_idx(ii));
+
+            row = find(stage_all == mode_target & ...
+                       abs(Irest_all - Ival)    < 1e-12 & ...
+                       abs(duty_all  - duty_val)< 1e-12 & ...
+                       abs(Tper_all  - Tper_val)< 1e-12 & ...
+                       abs(dplat_all - dplat_val)<1e-12, 1);
+            if isempty(row)
+                tcharge_val = NaN;
+            else
+                tcharge_val = tcharge_all(row);
+            end
+
+            PEAKS(end+1) = struct( ...
+                'stage',   mode_target, ...
+                'Irest',   Ival, ...
+                'duty',    duty_val, ...
+                'Tper',    Tper_val, ...
+                'dplat',   dplat_val, ...
+                'kind',    "worst", ...
+                'tcharge', tcharge_val);
+        end
+
+        % %% ----------------- 4) 3D Surface Plot -----------------
+        % figure(fig_id); clf;
+        % set(gcf,'Color','w');
+        % fig_id = fig_id + 1;
+        % 
+        % surf(DUTY, TPER, Z, 'FaceAlpha',0.9);
+        % shading interp;
+        % colorbar;
+        % 
+        % xlabel('Duty');
+        % ylabel('Pulse Period (s)');
+        % zlabel('\DeltaPlating');
+        % 
+        % 
+        % set(gca,'YScale','log','FontSize',14);
+        % 
+        % % === stage별 레이블: 축 바깥 왼쪽 위 =================================
+        % if isKey(stageLabelMap, mode_target)
+        %     lbl = stageLabelMap(mode_target);
+        %     put_label_outside(gcf, gca, lbl, subLabelFS);
+        % end
+        % % =====================================================================
+        % 
+        % %% ----------------- 5) Heatmap (clean) -----------------
+        % figure(fig_id); clf;
+        % set(gcf,'Color','w');
+        % fig_id = fig_id + 1;
+        % 
+        % contourf(DUTY, TPER, Z, 40, 'LineColor','none');
+        % colorbar;
+        % 
+        % xlabel('Duty');
+        % ylabel('Pulse Period (s)');
+        % 
+        % set(gca,'YScale','log','FontSize',14);
+        % axis square;  
+        % 
+        % % === 같은 stage → 같은 레이블 (축 바깥 왼쪽 위) =====================
+        % if isKey(stageLabelMap, mode_target)
+        %     lbl = stageLabelMap(mode_target);
+        %     put_label_outside(gcf, gca, lbl, subLabelFS);
+        % end
+        % % =====================================================================
+
+        %% ----------------- 6) Heatmap + markers -----------------
+        figure(fig_id); clf;
+        set(gcf,'Color','w');
+        fig_id = fig_id + 1;
+
+        % 깨끗한 heatmap이랑 완전히 같은 스타일로 먼저 그림
+        contourf(DUTY, TPER, Z, 40, 'LineColor','none');
+        colorbar;
+        hold on;
+
+        % 그 위에 best / worst marker만 얹기
+        hBest  = scatter(Dv(best_idx),  Pv(best_idx), 80, 'g', 'filled', ...
+            'MarkerEdgeColor','k', 'DisplayName','Best (low \DeltaPlating)');
+        hWorst = scatter(Dv(worst_idx), Pv(worst_idx), 60, 'r', 'filled', ...
+            'MarkerEdgeColor','k', 'DisplayName','Worst (high \DeltaPlating)');
+
+        xlabel('Duty');
+        ylabel('Pulse Period (s)');
+       
+
+        set(gca,'YScale','log','FontSize',14);
+        axis square;   % 3번째 그래프도 정사각형
+
+
+
+        % === 같은 stage → 같은 레이블 (축 바깥 왼쪽 위) =====================
+        if isKey(stageLabelMap, mode_target)
+            lbl = stageLabelMap(mode_target);
+            put_label_outside(gcf, gca, lbl, subLabelFS);
+        end
+        % =====================================================================
+
+        hold off;
+
+    end
+end
+
+fprintf('\n총 PEAKS 개수: %d\n', numel(PEAKS));
+
+%% ======================= Local helper functions ==========================
+function fpath = pick_one_file(folder, pattern)
+    L = dir(fullfile(folder, pattern));
+    assert(~isempty(L), '파일이 없습니다: %s', fullfile(folder, pattern));
+    [~,ix] = max([L.datenum]);
+    fpath = fullfile(L(ix).folder, L(ix).name);
+end
+
+function put_label_outside(fig_handle, ax_handle, label, subLabelFS)
+    figure(fig_handle);
+    ax_pos = ax_handle.Position;   % [x y w h]
+
+    % 더 바짝 붙이기
+    label_x = ax_pos(1) - 0.015;          % 왼쪽 위치는 그대로
+    label_y = ax_pos(2) + ax_pos(4) + 0.001;  % 위쪽 간격만 거의 0으로
+
+    annotation(fig_handle, 'textbox', [label_x label_y 0.1 0.05], ...
+        'String', label, ...
+        'Units', 'normalized', ...
+        'FontSize', subLabelFS, ...
+        'FontWeight', 'bold', ...
+        'LineStyle','none', ...
+        'HorizontalAlignment','left', ...
+        'VerticalAlignment','bottom');
+end
