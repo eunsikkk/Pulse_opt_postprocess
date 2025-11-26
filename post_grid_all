@@ -50,12 +50,13 @@ else
 end
 
 % stage_mode 1~7만 사용 (0 = baseline 제외)
-stage_list = 1;
 %stage_list = setdiff(unique(stage_all), 0);
+
+stage_list = 3;
 fprintf('\n총 stage_mode (0 제외): '); disp(stage_list');
 
-%% Irest 선택
-Irest_list = 1;
+%% Irest 선택 (지금은 Irest=0만 사용)
+Irest_list = 0;
 
 fig_id = 1;
 
@@ -64,7 +65,7 @@ PEAKS = struct('stage',{},'Irest',{},'duty',{},'Tper',{}, ...
                'dplat',{},'kind',{},'tcharge',{});
 
 %% =========================================================================
-% 2) stage_mode = 1~7, Irest 별로 모든 모드 반복
+% 2) stage_mode, Irest 별로 모든 모드 반복
 % =========================================================================
 for Ival = Irest_list'
 
@@ -243,9 +244,6 @@ for Ival = Irest_list'
 
         set(gca,'YScale','log');
         axis square
-        % legend([hBest, hWorst], ...
-        %       {'Best (low \DeltaPlating)','Worst (high \DeltaPlating)'}, ...
-        %        'Location','bestoutside');
 
         apply_fig_style();
         export_png(fH2, fullfile(fileparts(fullpath_csv), ...
@@ -263,7 +261,7 @@ fprintf('\n총 PEAKS 개수: %d\n', numel(PEAKS));
 % 4) COMSOL 모델 로드 및 모든 best/worst 포인트 시뮬 실행
 % =========================================================================
 fprintf('\n[SIM] Pulse ALL best/worst points 시뮬레이션 시작\n');
-%% ===== Debug 옵션: best1 + worst1만 선택해서 테스트하고 싶을 때 ==========
+
 debug_only_bestworst1 = true;   % 빠른 테스트할 때만 true
 
 if debug_only_bestworst1
@@ -349,7 +347,7 @@ end
 
 
 %% =========================================================================
-% 4-추가) Baseline MSCC (pulse off, stage_mode=0) 시뮬레이션
+% 4-추가) Baseline MSCC (pulse off, stage_mode=0/2) 시뮬레이션
 % =========================================================================
 fprintf('\n[SIM] Baseline MSCC4  시뮬레이션 시작\n');
 
@@ -389,7 +387,7 @@ colBlue = colTavg;           % bar plot best1
 % =========================================================================
 for k = 1:Ncase
     R  = Rcase(k);
-    lb = R.label;
+    lb = R.label; %#ok<NASGU>
 
     % 1) V, I vs time
     f1 = figure; set(gcf,'Color','w'); hold on; grid off;
@@ -414,7 +412,7 @@ for k = 1:Ncase
     out_png = fullfile(fig_out_dir, sprintf('case%02d_voltage_current.png', k));
     export_png(f1, out_png);
 
-   % 2) Temperature vs time (T_avg, T_min) --------------------------------
+   % 2) Temperature vs time (T_avg, T_min)
     f2 = figure; set(gcf,'Color','w'); hold on; grid off;
 
     TavgC = R.Tavg - 273.15;
@@ -434,7 +432,6 @@ for k = 1:Ncase
     apply_fig_style();
     out_png = fullfile(fig_out_dir, sprintf('case%02d_temperature.png', k));
     export_png(f2, out_png);
-
 
     % 3) Anode potential vs time
     f3 = figure; set(gcf,'Color','w'); hold on; grid off;
@@ -472,36 +469,36 @@ for k = 1:Ncase
 end
 
 %% =========================================================================
-% 5-A-Extra) Stage별 baseline vs best1 비교 플롯 (T_avg + T_min)
+% 5-A-Extra) Stage별 baseline vs best1 / worst1 비교 플롯
 % =========================================================================
 
-fprintf('\n[FIG] Baseline vs Best1 comparison plots (T_{avg} & T_{min}) 생성 중...\n');
+fprintf('\n[FIG] Baseline vs Best1/Worst1 comparison plots 생성 중...\n');
 
 unique_stage = unique([Rcase.stage]);
 
 for s = unique_stage
 
-    % --- 해당 stage의 best1 찾기 -----------------------------------------
+    % --- 해당 stage의 케이스 전체 모으기 ---
     idx_s = find([Rcase.stage] == s);
     Rs    = Rcase(idx_s);
     kinds = string({Rs.kind});
     dpl   = [Rs.dplat];
 
+    % ---------------- Best1 찾기 ----------------
     best_idx_raw = find(kinds == "best");
     if isempty(best_idx_raw)
         fprintf('Stage %d: best 없음 → 스킵\n', s);
         continue;
     end
 
-    % dplat 최소 → best1
-    [~, loc_min]     = min(dpl(best_idx_raw));
-    best1_localIdx   = best_idx_raw(loc_min);
-    Rb1              = Rs(best1_localIdx);
+    [~, loc_min]   = min(dpl(best_idx_raw));
+    best1_localIdx = best_idx_raw(loc_min);
+    Rb1            = Rs(best1_localIdx);
 
     % baseline: pulse OFF MSCC4
     R0 = R_base;
 
-    %% 1) V / I 비교 (모두 실선, 색으로만 구분)
+    %% 1) V / I 비교 (Baseline vs Best1)
     f1 = figure; set(gcf,'Color','w'); hold on; grid off;
 
     % 색 정의
@@ -512,12 +509,12 @@ for s = unique_stage
 
     yyaxis left;
     plot(R0.t,  R0.E,  '--', 'LineWidth',2.0, 'Color', colV_base);
-    plot(Rb1.t, Rb1.E, '-', 'LineWidth',2.0, 'Color', colV_best);
+    plot(Rb1.t, Rb1.E, '-',  'LineWidth',2.0, 'Color', colV_best);
     ylabel('E_{cell} (V)');
 
     yyaxis right;
     plot(R0.t,  R0.I,  '--', 'LineWidth',2.0, 'Color', colI_base);
-    plot(Rb1.t, Rb1.I, '-', 'LineWidth',2.0, 'Color', colI_best);
+    plot(Rb1.t, Rb1.I, '-',  'LineWidth',2.0, 'Color', colI_best);
     ylabel('I_{cell} (A)');
 
     xlabel('t (s)');
@@ -533,8 +530,7 @@ for s = unique_stage
     export_png(f1, fullfile(fig_out_dir, ...
         sprintf('stage%d_baseline_vs_best1_VI.png', s)));
 
-
-    %% 2) Temperature (T_{avg} & T_{min})
+    %% 2) Temperature (T_{avg} & T_{min}) - Baseline vs Best1
     f2 = figure; set(gcf,'Color','w'); hold on; grid off;
 
     % Baseline [°C]
@@ -574,7 +570,7 @@ for s = unique_stage
     export_png(f2, fullfile(fig_out_dir, ...
         sprintf('stage%d_baseline_vs_best1_T_all.png', s)));
 
-    %% 3) Anode potential
+    %% 3) Anode potential - Baseline vs Best1
     f3 = figure; set(gcf,'Color','w'); hold on; grid off;
 
     colAn_base = colGrey;   % Baseline: 회색
@@ -595,7 +591,7 @@ for s = unique_stage
     export_png(f3, fullfile(fig_out_dir, ...
         sprintf('stage%d_baseline_vs_best1_anode.png', s)));
 
-    %% 4) Plating capacity
+    %% 4) Plating capacity - Baseline vs Best1
     f4 = figure; set(gcf,'Color','w'); hold on; grid off;
 
     colPc_base = colGrey;   % Baseline: 회색
@@ -637,26 +633,21 @@ for s = unique_stage
     export_png(fBarBest, fullfile(fig_out_dir, ...
         sprintf('stage%d_charge_time_baseline_vs_best1.png', s)));
 
+    %% ---------------- Worst1 찾기 (같은 stage 내) ----------------
+    worst_idx_raw = find(kinds == "worst");
+    if isempty(worst_idx_raw)
+        fprintf('Stage %d: worst 없음 → worst plot 스킵\n', s);
+        continue;
+    end
 
-end
+    [~, loc_max]    = max(dpl(worst_idx_raw));
+    worst1_localIdx = worst_idx_raw(loc_max);
+    Rw1             = Rs(worst1_localIdx);
 
-%% ============================
-%   Worst1 찾기
-%% ============================
-worst_idx_raw = find(kinds == "worst");
-if ~isempty(worst_idx_raw)
-    % dplat 최대 → worst1
-    [~, loc_max]     = max(dpl(worst_idx_raw));
-    worst1_localIdx  = worst_idx_raw(loc_max);
-    Rw1              = Rs(worst1_localIdx);
-
-    %% 1) V / I 비교 (Baseline vs Worst1)
+    %% 5) V / I 비교 (Baseline vs Worst1)
     f1w = figure; set(gcf,'Color','w'); hold on; grid off;
 
-    % 색 정의
-    colV_base = colGrey;
     colV_w1   = colV;     % worst1도 같은 팔레트 사용
-    colI_base = [0.3 0.3 0.3];
     colI_w1   = colI;
 
     yyaxis left;
@@ -682,8 +673,7 @@ if ~isempty(worst_idx_raw)
     export_png(f1w, fullfile(fig_out_dir, ...
         sprintf('stage%d_baseline_vs_worst1_VI.png', s)));
 
-
-    %% 2) Temperature (Tavg, Tmin)
+    %% 6) Temperature (Tavg, Tmin) - Baseline vs Worst1
     f2w = figure; set(gcf,'Color','w'); hold on; grid off;
 
     Tavg1w = Rw1.Tavg - 273.15;
@@ -705,8 +695,7 @@ if ~isempty(worst_idx_raw)
     export_png(f2w, fullfile(fig_out_dir, ...
         sprintf('stage%d_baseline_vs_worst1_T_all.png', s)));
 
-
-    %% 3) Anode potential
+    %% 7) Anode potential - Baseline vs Worst1
     f3w = figure; set(gcf,'Color','w'); hold on; grid off;
 
     plot(R0.t,  R0.vdiff, '--', 'Color', colAn_base, 'LineWidth',2.0);
@@ -720,8 +709,7 @@ if ~isempty(worst_idx_raw)
     export_png(f3w, fullfile(fig_out_dir, ...
         sprintf('stage%d_baseline_vs_worst1_anode.png', s)));
 
-
-    %% 4) Plating capacity
+    %% 8) Plating capacity - Baseline vs Worst1
     f4w = figure; set(gcf,'Color','w'); hold on; grid off;
 
     plot(R0.t,  R0.pc, '--', 'Color', colPc_base, 'LineWidth',2.0);
@@ -756,8 +744,7 @@ if ~isempty(worst_idx_raw)
     export_png(fBarWorst, fullfile(fig_out_dir, ...
         sprintf('stage%d_charge_time_baseline_vs_worst1.png', s)));
 
-
-end
+end  % for s = unique_stage
 
 
 %% ======================= Local helper functions ==========================
@@ -770,11 +757,9 @@ function R = run_pulse_case(model, stage_mode, duty, Tper, Irest, ...
     model.param.set('duty_cycle',       num2str(duty));
     model.param.set('pulse_freq',       num2str(Tper));   % 모델에서 쓰는 이름 확인 필요
 
-    % === ★ 여기 중요: rest current 계수 무조건 세팅 ===
-    % CSV / PEAKS 에서 쓰는 Irest 값을 coeff로 바로 넣어버리기
+    % rest current 계수 직접 세팅 (CSV의 Irest 값을 coeff로 사용)
     model.param.set('pulse_rest_current_param_coeffi', num2str(Irest));
-
-    % (구버전 호환용으로 I_rest도 세팅하고 싶으면:)
+    % 필요하면 구버전 호환:
     % model.param.set('I_rest', num2str(Irest));
 
     model.param.set('t_cycling', num2str(t_cycling));
@@ -784,6 +769,7 @@ function R = run_pulse_case(model, stage_mode, duty, Tper, Irest, ...
 
     % ----- 실행 -----
     model.study(studyTag).run();
+
     % ----- 데이터 읽기 -----
     % d1=t, d2=E, d3=I, d4=Ect, d5=T_avg, d6=T_max, d7=T_min,
     % d8=Qh, d9=plating_cap, d10=CC_CH, d11=CV_CH
@@ -832,7 +818,6 @@ function R = run_pulse_case(model, stage_mode, duty, Tper, Irest, ...
                'pc',   pc(idx), ...
                'label',"", 'stage',[], 'kind',"", 'dplat',[]);
 end
-
 
 
 function export_png(fig_handle, outpath)
