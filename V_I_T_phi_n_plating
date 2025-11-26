@@ -9,7 +9,19 @@
 % - 프로토콜 비교 그래프: 전부 실선
 % - T_avg / T_min 모두 실선
 % - Title 전부 제거 (apply_fig_style에서 처리)
-% - apply_fig_style(): tick=16, label=18, legend=16 유지
+% - apply_fig_style(): tick=24, label=26, legend=24 유지
+%
+% 서브피겨 레이블 규칙:
+% - 프로토콜별 개별 플롯: CCCV=(a), MSCC2=(b), MSCC4=(c)
+% - 여러 프로토콜 같이 그린 플롯:
+%     anode potential  → (a)
+%     plating capacity → (b)
+%     temperature      → (c)
+%
+% 서브피겨 레이블 위치:
+% - (a), (b), (c) 모두 figure 기준 좌표로
+%   annotation('textbox', [0.01 0.93 0.1 0.05], ...) 를 사용해
+%   그래프 바깥 왼쪽 위에 배치
 % =========================================================================
 clc; clear; close all;
 
@@ -50,6 +62,9 @@ colAn   = colPurple; % Anode potential
 colCCCV  = colBlue;
 colMSCC2 = colPurple;
 colMSCC4 = colRed;
+
+% ---- 서브피겨 레이블 폰트 크기 ------------------------------------------
+subLabelFS = 32;
 
 %% 1) run_* 폴더 선택 -------------------------------------------------------
 if use_latest
@@ -108,6 +123,11 @@ PROT(end+1) = struct('name','CCCV',  'R',R_cccv,  'color',colCCCV);
 PROT(end+1) = struct('name','MSCC2', 'R',R_mscc2, 'color',colMSCC2);
 PROT(end+1) = struct('name','MSCC4', 'R',R_mscc4, 'color',colMSCC4);
 
+% ---- 프로토콜별 (개별 플롯) 서브피겨 레이블: CCCV=(a), MSCC2=(b), MSCC4=(c)
+labelMapProt = containers.Map( ...
+    {'CCCV','MSCC2','MSCC4'}, ...
+    {'(a)','(b)','(c)'} );
+
 %% 5.1) Figure 1 — 전압/전류 vs time (색 = 프로토콜 기준) -------------------
 f1 = figure(4101); clf;
 set(gcf,'Color','w'); hold on; grid off;
@@ -135,7 +155,7 @@ legend({'E CCCV','E MSCC2','E MSCC4', ...
         'Location','best');
 
 ax = gca;
-ax.XColor        = 'k';
+ax.XColor         = 'k';
 ax.YAxis(1).Color = 'k';
 ax.YAxis(2).Color = 'k';
 
@@ -159,6 +179,10 @@ ax.XColor = 'k';
 ax.YColor = 'k';
 
 apply_fig_style();
+
+% ---- 같이 그리는 그래프: anode potential → (a) (figure 바깥 왼쪽 위) -----
+put_subfigure_label_outside(f2, '(a)', subLabelFS);
+
 export_png(f2, fullfile(fig_out_dir, 'timeseries_anode_potential.png'));
 
 %% 5.3) Figure 3 — T_{avg}, T_{min} vs time [°C] (색 = 프로토콜 기준) ------
@@ -194,6 +218,10 @@ ax.XColor = 'k';
 ax.YColor = 'k';
 
 apply_fig_style();
+
+% ---- 같이 그리는 그래프: Temperature → (c) ------------------------------
+put_subfigure_label_outside(f3, '(c)', subLabelFS);
+
 export_png(f3, fullfile(fig_out_dir, 'timeseries_temperature.png'));
 
 %% 5.3b) Plating capacity vs time — CCCV/MSCC2/MSCC4 한 그림 ----------------
@@ -213,6 +241,10 @@ ax.XColor = 'k';
 ax.YColor = 'k';
 
 apply_fig_style();
+
+% ---- 같이 그리는 그래프: Lithium plating capacity → (b) -----------------
+put_subfigure_label_outside(fPall, '(b)', subLabelFS);
+
 out_Pall = fullfile(fig_out_dir, 'timeseries_platingcap_allProtocols.png');
 export_png(fPall, out_Pall);
 fprintf('Saved: %s\n', out_Pall);
@@ -237,11 +269,15 @@ for k = 1:numel(PROT)
     legend({'E_{cell}','I_{cell}'}, 'Location','best');
 
     ax = gca;
-    ax.XColor        = 'k';
+    ax.XColor         = 'k';
     ax.YAxis(1).Color = 'k';
     ax.YAxis(2).Color = 'k';
 
-    apply_fig_style(); hold off;
+    apply_fig_style();
+
+    % ---- 프로토콜별 개별 플롯 레이블: CCCV(a), MSCC2(b), MSCC4(c) --------
+    lbl = labelMapProt(P.name);
+    put_subfigure_label_outside(fV, lbl, subLabelFS);
 
     out_png = fullfile(fig_out_dir, ...
         sprintf('timeseries_voltage_current_%s.png', P.name));
@@ -271,7 +307,11 @@ for k = 1:numel(PROT)
     ax.XColor = 'k';
     ax.YColor = 'k';
 
-    apply_fig_style(); hold off;
+    apply_fig_style();
+
+    % ---- 프로토콜별 개별 플롯 레이블 --------------------------------------
+    lbl = labelMapProt(P.name);
+    put_subfigure_label_outside(fT, lbl, subLabelFS);
 
     out_png = fullfile(fig_out_dir, ...
         sprintf('timeseries_temperature_%s.png', P.name));
@@ -296,7 +336,11 @@ for k = 1:numel(PROT)
     ax.XColor = 'k';
     ax.YColor = 'k';
 
-    apply_fig_style(); hold off;
+    apply_fig_style();
+
+    % ---- 프로토콜별 개별 플롯 레이블 --------------------------------------
+    lbl = labelMapProt(P.name);
+    put_subfigure_label_outside(fA, lbl, subLabelFS);
 
     out_png = fullfile(fig_out_dir, ...
         sprintf('timeseries_anode_potential_%s.png', P.name));
@@ -312,10 +356,10 @@ J_T = zeros(nP,1); % ∫ΔT dt
 J_Q = zeros(nP,1); % ∫Qh dt
 
 for k = 1:nP
-    R     = PROT(k).R;
-    t     = R.t(:);
-    Tavg  = R.Tavg(:);
-    Qh    = R.Qh(:);
+    R      = PROT(k).R;
+    t      = R.t(:);
+    Tavg   = R.Tavg(:);
+    Qh     = R.Qh(:);
     T_init = Tavg(1);
 
     dT     = Tavg - T_init;
@@ -382,6 +426,11 @@ for k = 1:numel(PROT)
     ax.YColor = 'k';
 
     apply_fig_style();
+
+    % ---- 프로토콜별 개별 플롯 레이블 --------------------------------------
+    lbl = labelMapProt(P.name);
+    put_subfigure_label_outside(fP, lbl, subLabelFS);
+
     out_png = fullfile(fig_out_dir, ...
         sprintf('timeseries_platingcap_%s.png', P.name));
     export_png(fP, out_png);
@@ -548,7 +597,7 @@ function apply_fig_style()
     % 공통 figure 스타일: tick / label / legend 폰트 + title 제거 + BOX ON
     ax = gca;
 
-    % ---- 폰트 사이즈 확장 (+8) ----
+    % ---- 폰트 사이즈 ----
     tickFS   = 24;   % 기존 16 → 24
     labelFS  = 26;   % 기존 18 → 26
     legendFS = 24;   % 기존 16 → 24
@@ -585,5 +634,14 @@ function apply_fig_style()
     box(ax, 'on');
 end
 
-
-
+function put_subfigure_label_outside(fig_handle, label, subLabelFS)
+    % figure 전체 좌표계 기준으로 왼쪽 위에 (a), (b), (c) 등 표시
+    figure(fig_handle);
+    annotation('textbox', [0.01 0.93 0.1 0.05], ...
+        'String', label, ...
+        'FontSize', subLabelFS, ...
+        'FontWeight', 'bold', ...
+        'EdgeColor', 'none', ...
+        'VerticalAlignment','top', ...
+        'HorizontalAlignment','left');
+end
