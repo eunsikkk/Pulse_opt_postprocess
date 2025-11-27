@@ -1,303 +1,425 @@
-% =========================================================================
-% MSCC 최적 C-rate 시뮬레이션 & 결과 플롯 (Pareto 제거 버전)
-% - run_* 폴더에서 run_summary_*.mat 읽음
-% - COMSOL 모델 실행해서 타임시리즈, thermal, charge time 비교 플롯만 그림
-% - Pareto 3D (t, T_avg, plating_cap) 관련 코드는 모두 제거
-%
-% 스타일 규칙:
-% - 모든 LineWidth = 2.0
-% - 프로토콜 비교 그래프: 전부 실선
-% - T_avg / T_min 모두 실선
-% - Title 전부 제거 (apply_fig_style에서 처리)
-% - apply_fig_style(): tick=24, label=26, legend=24 유지
-%
-% 서브피겨 레이블 규칙:
-% - 프로토콜별 개별 플롯: CCCV=(a), MSCC2=(b), MSCC4=(c)
-% - 여러 프로토콜 같이 그린 플롯:
-%     anode potential  → (a)
-%     plating capacity → (b)
-%     temperature      → (c)
-%
-% 서브피겨 레이블 위치:
-% - (a), (b), (c) 모두 figure 기준 좌표로
-%   annotation('textbox', [0.01 0.93 0.1 0.05], ...) 를 사용해
-%   그래프 바깥 왼쪽 위에 배치
+%% =========================================================================
+% 0) Pulse Grid CSV 파일 선택
 % =========================================================================
 clc; clear; close all;
 
-%% 0) 입력/출력 경로 --------------------------------------------------------
-base_dir = 'G:\공유 드라이브\Battery Software Group (2025)\Members\최은식\COMSOL\MSCC_optimization\MSCC_CCCV_opt';
-assert(isfolder(base_dir), '기본 폴더 없음: %s', base_dir);
+base_dir = 'G:\공유 드라이브\Battery Software Group (2025)\Members\최은식\COMSOL\MSCC_optimization\Pulse_opt';
+assert(isfolder(base_dir), '폴더가 존재하지 않습니다: %s', base_dir);
 
-% === 토글 스위치: true면 최신 run_* 자동선택, false면 대화형 선택 ===
-use_latest = false;
+[fn, fp] = uigetfile(fullfile(base_dir, '*.csv'), ...
+                     'Pulse Grid CSV 파일을 선택하세요');
 
-% Figure 저장 루트
-fig_base_dir = 'G:\공유 드라이브\Battery Software Group (2025)\Members\최은식\COMSOL\Figure';
-assert(isfolder(fileparts(fig_base_dir)) || isfolder(fig_base_dir), 'Figure 상위 폴더가 유효하지 않습니다.');
-
-ts = datestr(now,'yyyymmdd_HHMMSS');
-fig_out_dir = fullfile(fig_base_dir, ['pareto_' ts]); % 이름은 그냥 재사용
-if ~isfolder(fig_out_dir), mkdir(fig_out_dir); end
-
-%% 팔레트 색상 정의 (공통 사용) --------------------------------------------
-colBlue   = [0,115,194]/255;  % #0073C2
-colYellow = [239,192,0]/255;  % #EFC000
-colRed    = [205,83,76]/255;  % #CD534C
-colGreen  = [32,133,78]/255;  % #20854E
-colPurple = [146,94,159]/255; % #925E9F
-colCyan   = [77,187,213]/255; % #4DBBD5
-colBrown  = [126,97,72]/255;  % #7E6148
-colGrey   = [116,118,120]/255;% #747678
-
-% 물리량별 고정 색상
-colTavg = colBlue;   % T_avg
-colTmax = colRed;    % T_max
-colPc   = colGreen;  % plating_cap
-colV    = colYellow; % Voltage
-colI    = colCyan;   % Current
-colAn   = colPurple; % Anode potential
-
-% 프로토콜별 색상 (파레토/막대 등)
-colCCCV  = colBlue;
-colMSCC2 = colPurple;
-colMSCC4 = colRed;
-
-% ---- 서브피겨 레이블 폰트 크기 ------------------------------------------
-subLabelFS = 32;
-
-%% 1) run_* 폴더 선택 -------------------------------------------------------
-if use_latest
-    d = dir(fullfile(base_dir, 'run_*'));
-    assert(~isempty(d), 'run_* 폴더가 없습니다. 먼저 최적화 스크립트를 실행하세요.');
-    [~,ix] = max([d.datenum]);
-    run_dir = fullfile(base_dir, d(ix).name);
-else
-    run_dir = uigetdir(base_dir, '분석할 run_* 폴더를 선택하세요');
-    if isstring(run_dir), run_dir = char(run_dir); end
-    assert(~isequal(run_dir,0), '폴더 선택이 취소되었습니다.');
-    [~,selname] = fileparts(run_dir);
-    assert(startsWith(selname,'run_'), '선택한 폴더명이 run_* 형식이 아닙니다: %s', selname);
+if isequal(fn, 0)
+    error('파일 선택이 취소되었습니다.');
 end
-fprintf('Using run dir: %s\n', run_dir);
 
-%% ====================== 최적 C-rate 시뮬레이션 ============================
-fprintf('\n[SIM] 최적 C-rate 시뮬레이션 (liion.Ect) 시작\n');
+fullpath_csv = fullfile(fp, fn);
+fprintf('선택한 CSV: %s\n', fullpath_csv);
+
+
+%% =========================================================================
+% 1) CSV 로드
+% =========================================================================
+T = readtable(fullpath_csv);
+
+% 필수 컬럼
+stage_all = T.stage_mode;
+duty_all  = T.duty;
+Tper_all  = T.pulse_period_s;
+dplat_all = T.d_plating;    % = plating_cap - plating_cap_base
+
+% (있으면 I_rest도 같이 읽자)
+if ismember('I_rest', T.Properties.VariableNames)
+    Irest_all = T.I_rest;
+elseif ismember('Irest', T.Properties.VariableNames)
+    Irest_all = T.Irest;
+else
+    Irest_all = zeros(height(T),1);
+end
+
+% 충전시간 컬럼 (가능한 이름들 체크)
+if ismember('t_charge', T.Properties.VariableNames)
+    tcharge_all = T.t_charge;
+elseif ismember('t_charge_s', T.Properties.VariableNames)
+    tcharge_all = T.t_charge_s;
+elseif ismember('tcharge', T.Properties.VariableNames)
+    tcharge_all = T.tcharge;
+else
+    tcharge_all = nan(height(T),1);
+    warning('t_charge 컬럼을 찾지 못했습니다. 나중 막대그래프에서 NaN이 나올 수 있습니다.');
+end
+
+% stage_mode 1~7만 사용 (0 = baseline 제외)
+stage_list = setdiff(unique(stage_all), 0);
+
+%stage_list = 3;
+fprintf('\n총 stage_mode (0 제외): '); disp(stage_list');
+
+%% Irest 선택 (지금은 Irest=0만 사용)
+Irest_list = 0;
+
+fig_id = 1;
+
+% === 각 (stage, Irest)별 peak 정보 저장용 ===
+PEAKS = struct('stage',{},'Irest',{},'duty',{},'Tper',{}, ...
+               'dplat',{},'kind',{},'tcharge',{});
+
+%% =========================================================================
+% 2) stage_mode, Irest 별로 모든 모드 반복
+% =========================================================================
+for Ival = Irest_list'
+
+    for mode_target = stage_list'
+
+        % ------------ (stage, Irest) subset ------------
+        idx = (stage_all == mode_target) & (Irest_all == Ival);
+
+        duty  = duty_all(idx);
+        Tper  = Tper_all(idx);
+        dplat = dplat_all(idx);
+        tchg  = tcharge_all(idx);
+
+        fprintf('\n==============================================\n');
+        fprintf('>> stage_mode = %d, Irest = %.0f 처리중...\n', mode_target, Ival);
+        fprintf('==============================================\n');
+        fprintf('데이터 개수: %d\n', numel(duty));
+
+        if isempty(duty)
+            warning('stage_mode %d, Irest %.0f 는 데이터가 없습니다. 스킵합니다.', ...
+                     mode_target, Ival);
+            continue;
+        end
+
+        %% ----------------- 3) duty × Tper grid -----------------
+        duty_u = unique(duty);
+        Tper_u = unique(Tper);
+
+        [DUTY, TPER] = meshgrid(duty_u, Tper_u);
+
+        Z     = nan(size(DUTY));
+        Ztchg = nan(size(DUTY));  % 필요하면 충전시간 grid도 만들 수 있음
+
+        for i = 1:numel(duty)
+            rr = find(Tper_u == Tper(i));
+            cc = find(duty_u == duty(i));
+            Z(rr,   cc) = dplat(i);
+            Ztchg(rr,cc) = tchg(i);
+        end
+
+        %% 3-1) 이 (stage, Irest) 내에서 best 2 / worst 2
+        Z_flat    = Z(:);
+        DUTY_flat = DUTY(:);
+        TPER_flat = TPER(:);
+
+        valid = ~isnan(Z_flat);
+        Zv = Z_flat(valid);
+        Dv = DUTY_flat(valid);
+        Pv = TPER_flat(valid);
+
+        if numel(Zv) < 2
+            warning('stage_mode %d, Irest %.0f: 유효 Z 포인트 < 2, peak 스킵.', ...
+                     mode_target, Ival);
+            continue;
+        end
+
+        % best: Δplating 최소 2개
+        [~, sort_asc] = sort(Zv, 'ascend');
+        nb = min(2, numel(Zv));
+        best_idx = sort_asc(1:nb);
+
+        % worst: Δplating 최대 2개
+        [~, sort_desc] = sort(Zv, 'descend');
+        nw = min(2, numel(Zv));
+        worst_idx = sort_desc(1:nw);
+
+        % --- PEAKS에 저장 (stage + Irest 단위) ---
+        for ii = 1:nb
+            duty_val  = Dv(best_idx(ii));
+            Tper_val  = Pv(best_idx(ii));
+            dplat_val = Zv(best_idx(ii));
+
+            row = find(stage_all == mode_target & ...
+                       abs(Irest_all - Ival)    < 1e-12 & ...
+                       abs(duty_all  - duty_val)< 1e-12 & ...
+                       abs(Tper_all  - Tper_val)< 1e-12 & ...
+                       abs(dplat_all - dplat_val)<1e-12, 1);
+            if isempty(row)
+                tcharge_val = NaN;
+            else
+                tcharge_val = tcharge_all(row);
+            end
+
+            PEAKS(end+1) = struct( ...
+                'stage',   mode_target, ...
+                'Irest',   Ival, ...
+                'duty',    duty_val, ...
+                'Tper',    Tper_val, ...
+                'dplat',   dplat_val, ...
+                'kind',    "best", ...
+                'tcharge', tcharge_val);
+        end
+
+        for ii = 1:nw
+            duty_val  = Dv(worst_idx(ii));
+            Tper_val  = Pv(worst_idx(ii));
+            dplat_val = Zv(worst_idx(ii));
+
+            row = find(stage_all == mode_target & ...
+                       abs(Irest_all - Ival)    < 1e-12 & ...
+                       abs(duty_all  - duty_val)< 1e-12 & ...
+                       abs(Tper_all  - Tper_val)< 1e-12 & ...
+                       abs(dplat_all - dplat_val)<1e-12, 1);
+            if isempty(row)
+                tcharge_val = NaN;
+            else
+                tcharge_val = tcharge_all(row);
+            end
+
+            PEAKS(end+1) = struct( ...
+                'stage',   mode_target, ...
+                'Irest',   Ival, ...
+                'duty',    duty_val, ...
+                'Tper',    Tper_val, ...
+                'dplat',   dplat_val, ...
+                'kind',    "worst", ...
+                'tcharge', tcharge_val);
+        end
+
+        %% ----------------- 4) 3D Surface Plot -----------------
+        fS = figure(fig_id); clf; set(gcf,'Color','w');
+        fig_id = fig_id + 1;
+
+        surf(DUTY, TPER, Z, 'FaceAlpha',0.9);
+        shading interp;
+        colorbar;
+
+        xlabel('Duty');
+        ylabel('Pulse Period (s)');
+        zlabel('\DeltaPlating');
+
+        set(gca,'YScale','log');
+
+        apply_fig_style();
+        export_png(fS, fullfile(fileparts(fullpath_csv), ...
+            sprintf('stage%d_Irest%.0f_surface.png', mode_target, Ival)));
+
+        %% ----------------- 5) Heatmap (clean) -----------------
+        fH1 = figure(fig_id); clf; set(gcf,'Color','w');
+        fig_id = fig_id + 1;
+
+        contourf(DUTY, TPER, Z, 40, 'LineColor','none');
+        colorbar;
+
+        xlabel('Duty');
+        ylabel('Pulse Period (s)');
+
+        set(gca,'YScale','log');
+        axis square
+
+        apply_fig_style();
+        export_png(fH1, fullfile(fileparts(fullpath_csv), ...
+            sprintf('stage%d_Irest%.0f_heatmap_clean.png', mode_target, Ival)));
+
+        %% ----------------- 6) Heatmap + markers ---------------
+        fH2 = figure(fig_id); clf; set(gcf,'Color','w');
+        fig_id = fig_id + 1;
+
+        contourf(DUTY, TPER, Z, 40, 'LineColor','none');
+        colorbar;
+        hold on;
+
+        % 팔레트: best=green(colPc), worst=red(colRed)
+        colPc_local  = [32,133,78]/255;   % 동일 팔레트
+        colRed_local = [205,83,76]/255;
+
+        hBest  = scatter(Dv(best_idx),  Pv(best_idx), 80, colPc_local, 'filled', ...
+            'MarkerEdgeColor','k', 'LineWidth',2.0, ...
+            'DisplayName','Best (low \DeltaPlating)');
+        hWorst = scatter(Dv(worst_idx), Pv(worst_idx), 80, colRed_local, 'filled', ...
+            'MarkerEdgeColor','k', 'LineWidth',2.0, ...
+            'DisplayName','Worst (high \DeltaPlating)');
+
+        xlabel('Duty');
+        ylabel('Pulse Period (s)');
+
+        set(gca,'YScale','log');
+        axis square
+
+        apply_fig_style();
+        export_png(fH2, fullfile(fileparts(fullpath_csv), ...
+            sprintf('stage%d_Irest%.0f_heatmap_markers.png', mode_target, Ival)));
+
+        hold off;
+
+    end % mode_target
+end % Irest loop
+
+fprintf('\n총 PEAKS 개수: %d\n', numel(PEAKS));
+
+
+%% =========================================================================
+% 4) COMSOL 모델 로드 및 모든 best/worst 포인트 시뮬 실행
+% =========================================================================
+fprintf('\n[SIM] Pulse ALL best/worst points 시뮬레이션 시작\n');
+
+debug_only_bestworst1 = false;   % 빠른 테스트할 때만 true
+
+if debug_only_bestworst1
+    all_stage = [PEAKS.stage];
+    all_kind  = string({PEAKS.kind});   % "best" / "worst"
+    all_dplat = [PEAKS.dplat];
+
+    keep = false(size(PEAKS));   % 남길 인덱스 마스크
+
+    stages = unique(all_stage);
+    for s = stages
+        idx_s = (all_stage == s);
+
+        % --- best1: dplat 최소 ---
+        idx_best = find(idx_s & all_kind == "best");
+        if ~isempty(idx_best)
+            [~, loc_min] = min(all_dplat(idx_best));
+            keep(idx_best(loc_min)) = true;
+        end
+
+        % --- worst1: dplat 최대 ---
+        idx_worst = find(idx_s & all_kind == "worst");
+        if ~isempty(idx_worst)
+            [~, loc_max] = max(all_dplat(idx_worst));
+            keep(idx_worst(loc_max)) = true;
+        end
+    end
+
+    PEAKS = PEAKS(keep);
+    fprintf('>> debug_only_bestworst1 = true: 각 stage별 best1 + worst1만 남김. Ncase = %d\n', numel(PEAKS));
+end
+
 import com.comsol.model.*
 import com.comsol.model.util.*
 ModelUtil.showProgress(true);
 
-% 5.1) 최적해 요약 MAT 로드
-summary_mat = pick_one_file(run_dir, 'run_summary_*.mat');
-S = load(summary_mat);
-
-% --- 최적 C-rate (전부 summary에서 읽음) ----------------------------------
-C_cccv  = S.optimal_C_rate;       % scalar
-C_mscc2 = S.optimal_C_mscc2(:).'; % [C12 C3456]
-C_mscc4 = S.optimal_C_mscc4(:).'; % [C1 C2 C34 C56]
-
-% --- 각 프로토콜별 최적 충전 시간 [s] ------------------------------------
-t_cccv  = S.cccv_min_t;
-t_mscc2 = S.mscc2_min_t;
-t_mscc4 = S.mscc4_min_t;
-
-% 5.2) 모델 로드 ------------------------------------------------------------
-filepath  = 'G:\공유 드라이브\Battery Software Group (2025)\Members\최은식\COMSOL';
-filename  = 'ES_MSCCPC_Final.mph';
+filepath = 'G:\공유 드라이브\Battery Software Group (2025)\Members\최은식\COMSOL';
+filename = 'ES_MSCCPC_Final.mph';
 full_path = fullfile(filepath, filename);
 assert(isfile(full_path),'mph 파일 없음: %s', full_path);
 
 model = mphload(full_path);
 
-% 5.4) 실행 (프로토콜당 1회 실행, tlist = range(0,10,t_cycling))
-fprintf('\n[SIM] Running CCCV...\n');
-R_cccv  = run_and_eval('CCCV',  model, C_cccv,  t_cccv);
-fprintf('\n[SIM] Running MSCC2...\n');
-R_mscc2 = run_and_eval('MSCC2', model, C_mscc2, t_mscc2);
-fprintf('\n[SIM] Running MSCC4...\n');
-R_mscc4 = run_and_eval('MSCC4', model, C_mscc4, t_mscc4);
+% --- Pulse OFF baseline (stage_mode = 0) 한 번 실행 ---
+dt_out_default    = 1;
+t_cycling_default = 10000;
 
-%% 프로토콜 리스트 (이후 플롯용) -------------------------------------------
-PROT = struct('name',{},'R',{},'color',{});
-PROT(end+1) = struct('name','CCCV',  'R',R_cccv,  'color',colCCCV);
-PROT(end+1) = struct('name','MSCC2', 'R',R_mscc2, 'color',colMSCC2);
-PROT(end+1) = struct('name','MSCC4', 'R',R_mscc4, 'color',colMSCC4);
+fprintf('\n[SIM] Baseline (pulse OFF, stage_mode=0) running...\n');
+R_base = run_pulse_case(model, 0, 0.5, 1.0, 0, ...
+                        t_cycling_default, dt_out_default, ...
+                        'std3', 'dset37');
 
-% ---- 프로토콜별 (개별 플롯) 서브피겨 레이블: CCCV=(a), MSCC2=(b), MSCC4=(c)
-labelMapProt = containers.Map( ...
-    {'CCCV','MSCC2','MSCC4'}, ...
-    {'(a)','(b)','(c)'} );
+Ncase = numel(PEAKS);
+Rcase(Ncase) = struct('t',[],'E',[],'I',[], ...
+                      'vdiff',[],'Tavg',[],'Tmax',[], 'Tmin',[], ...
+                      'Qh',[],'pc',[], ...
+                      'label',"",'stage',[],'kind',"",'dplat',[]);
 
-%% 5.1) Figure 1 — 전압/전류 vs time (색 = 프로토콜 기준) -------------------
-f1 = figure(4101); clf;
-set(gcf,'Color','w'); hold on; grid off;
+for k = 1:Ncase
+    st = PEAKS(k).stage;
+    du = PEAKS(k).duty;
+    Tp = PEAKS(k).Tper;
+    Ir = PEAKS(k).Irest;
+    if isnan(Ir), Ir = 0; end
 
-% 프로토콜별 line style (요청: 모두 실선)
-ls_CCCV  = '-';
-ls_MSCC2 = '-';
-ls_MSCC4 = '-';
+    t_cycling = t_cycling_default;
 
-yyaxis left; % Voltage
-plot(R_cccv.t,  R_cccv.E,  'LineStyle',ls_CCCV,  'LineWidth',2.0, 'Color',colCCCV);
-plot(R_mscc2.t, R_mscc2.E, 'LineStyle',ls_MSCC2, 'LineWidth',2.0, 'Color',colMSCC2);
-plot(R_mscc4.t, R_mscc4.E, 'LineStyle',ls_MSCC4, 'LineWidth',2.0, 'Color',colMSCC4);
-ylabel('E_{cell} (V)');
+    fprintf('\n[SIM] Case %d: kind=%s, stage=%d, duty=%.3f, Tper=%.3g, Irest=%.3g\n', ...
+        k, PEAKS(k).kind, st, du, Tp, Ir);
 
-yyaxis right; % Current
-plot(R_cccv.t,  R_cccv.I,  'LineStyle',ls_CCCV,  'LineWidth',2.0, 'Color',colCCCV);
-plot(R_mscc2.t, R_mscc2.I, 'LineStyle',ls_MSCC2, 'LineWidth',2.0, 'Color',colMSCC2);
-plot(R_mscc4.t, R_mscc4.I, 'LineStyle',ls_MSCC4, 'LineWidth',2.0, 'Color',colMSCC4);
-ylabel('I_{cell} (A)');
+    R = run_pulse_case(model, st, du, Tp, Ir, ...
+                   t_cycling, dt_out_default, ...
+                   'std3', 'dset37');
 
-xlabel('t (s)');
-legend({'E CCCV','E MSCC2','E MSCC4', ...
-        'I CCCV','I MSCC2','I MSCC4'}, ...
-        'Location','best');
+    R.label = sprintf('%s: st%d, duty=%.2f, T=%.3gs, Irest=%.2g', ...
+        upper(char(PEAKS(k).kind)), st, du, Tp, Ir);
+    R.stage = st;
+    R.kind  = PEAKS(k).kind;
+    R.dplat = PEAKS(k).dplat;
 
-ax = gca;
-ax.XColor         = 'k';
-ax.YAxis(1).Color = 'k';
-ax.YAxis(2).Color = 'k';
+    Rcase(k) = R;
+end
 
-apply_fig_style();
-export_png(f1, fullfile(fig_out_dir, 'timeseries_voltage_current.png'));
 
-%% 5.2) Figure 2 — Anode potential vs time (색 = 프로토콜 기준) -------------
-f2 = figure(4102); clf;
-set(gcf,'Color','w'); hold on; grid off;
+%% =========================================================================
+% 4-추가) Baseline MSCC (pulse off, stage_mode=0/2) 시뮬레이션
+% =========================================================================
+fprintf('\n[SIM] Baseline MSCC4  시뮬레이션 시작\n');
 
-plot(R_cccv.t,  R_cccv.vdiff,  'LineStyle',ls_CCCV,  'LineWidth',2.0, 'Color',colCCCV);
-plot(R_mscc2.t, R_mscc2.vdiff, 'LineStyle',ls_MSCC2, 'LineWidth',2.0, 'Color',colMSCC2);
-plot(R_mscc4.t, R_mscc4.vdiff, 'LineStyle',ls_MSCC4, 'LineWidth',2.0, 'Color',colMSCC4);
+stage_base = 2;      
+duty_base  = 0.5;
+Tper_base  = 10000;  % 이벤트 안 걸리게 크게
+Irest_base = 0;
 
-xlabel('t (s)');
-ylabel('Anode potential (V)');
-legend({'CCCV','MSCC2','MSCC4'}, 'Location','best');
+R_base = run_pulse_case(model, stage_base, duty_base, Tper_base, ...
+                        Irest_base, t_cycling_default, dt_out_default, ...
+                        'std2', 'dset3');
 
-ax = gca;
-ax.XColor = 'k';
-ax.YColor = 'k';
 
-apply_fig_style();
+%% =========================================================================
+% 5) Figure 출력/저장용 설정 + 팔레트 색상 정의
+% =========================================================================
+fig_base_dir = 'G:\공유 드라이브\Battery Software Group (2025)\Members\최은식\COMSOL\Figure';
+assert(isfolder(fileparts(fig_base_dir)) || isfolder(fig_base_dir), ...
+       'Figure 상위 폴더가 유효하지 않습니다.');
 
-% ---- 같이 그리는 그래프: anode potential → (a) (figure 바깥 왼쪽 위) -----
-put_subfigure_label_outside(f2, '(a)', subLabelFS);
+ts = datestr(now,'yyyymmdd_HHMMSS');
+fig_out_dir = fullfile(fig_base_dir, ['pulse_bestworst_ALL_' ts]);
+if ~isfolder(fig_out_dir), mkdir(fig_out_dir); end
 
-export_png(f2, fullfile(fig_out_dir, 'timeseries_anode_potential.png'));
+% 팔레트 색상 (이전 스크립트와 동일)
+colTavg = [0,115,194]/255;   % #0073C2 (T_avg, blue)
+colTmax = [205,83,76]/255;   % #CD534C (T_max, red)
+colPc   = [32,133,78]/255;   % #20854E (plating, green)
+colV    = [239,192,0]/255;   % #EFC000 (V, yellow)
+colI    = [77,187,213]/255;  % #4DBBD5 (I, cyan)
+colAn   = [146,94,159]/255;  % #925E9F (anode, purple)
+colGrey = [116,118,120]/255; % #747678 (baseline)
+colBlue = colTavg;           % bar plot best1
 
-%% 5.3) Figure 3 — T_{avg}, T_{min} vs time [°C] (색 = 프로토콜 기준) ------
-f3 = figure(4103); clf;
-set(gcf,'Color','w'); hold on; grid off;
+%% =========================================================================
+% 5-A) 케이스별 개별 플롯 (V/I, T, anode, plating)
+% =========================================================================
+for k = 1:Ncase
+    R  = Rcase(k);
+    lb = R.label; %#ok<NASGU>
 
-TavgC_cccv  = R_cccv.Tavg  - 273.15;
-TavgC_mscc2 = R_mscc2.Tavg - 273.15;
-TavgC_mscc4 = R_mscc4.Tavg - 273.15;
-
-TminC_cccv  = R_cccv.Tmin  - 273.15;
-TminC_mscc2 = R_mscc2.Tmin - 273.15;
-TminC_mscc4 = R_mscc4.Tmin - 273.15;
-
-% T_avg (실선, 색 = 프로토콜)
-plot(R_cccv.t,  TavgC_cccv,  '-', 'LineWidth',2.0, 'Color',colCCCV);
-plot(R_mscc2.t, TavgC_mscc2, '-', 'LineWidth',2.0, 'Color',colMSCC2);
-plot(R_mscc4.t, TavgC_mscc4, '-', 'LineWidth',2.0, 'Color',colMSCC4);
-
-% T_min (실선, 색 = 프로토콜)
-plot(R_cccv.t,  TminC_cccv,  '-', 'LineWidth',2.0, 'Color',colCCCV);
-plot(R_mscc2.t, TminC_mscc2, '-', 'LineWidth',2.0, 'Color',colMSCC2);
-plot(R_mscc4.t, TminC_mscc4, '-', 'LineWidth',2.0, 'Color',colMSCC4);
-
-xlabel('t (s)');
-ylabel('Temperature (°C)');
-legend({'T_{avg} CCCV','T_{avg} MSCC2','T_{avg} MSCC4', ...
-        'T_{min} CCCV','T_{min} MSCC2','T_{min} MSCC4'}, ...
-        'Location','best');
-
-ax = gca;
-ax.XColor = 'k';
-ax.YColor = 'k';
-
-apply_fig_style();
-
-% ---- 같이 그리는 그래프: Temperature → (c) ------------------------------
-put_subfigure_label_outside(f3, '(c)', subLabelFS);
-
-export_png(f3, fullfile(fig_out_dir, 'timeseries_temperature.png'));
-
-%% 5.3b) Plating capacity vs time — CCCV/MSCC2/MSCC4 한 그림 ----------------
-fPall = figure(4104); clf;
-set(gcf,'Color','w'); hold on; grid off;
-
-plot(R_cccv.t,  R_cccv.pc,  'LineStyle',ls_CCCV,  'LineWidth',2.0, 'Color',colCCCV);
-plot(R_mscc2.t, R_mscc2.pc, 'LineStyle',ls_MSCC2, 'LineWidth',2.0, 'Color',colMSCC2);
-plot(R_mscc4.t, R_mscc4.pc, 'LineStyle',ls_MSCC4, 'LineWidth',2.0, 'Color',colMSCC4);
-
-xlabel('t (s)');
-ylabel('plating\_cap (Ah/m^2)');
-legend({'CCCV','MSCC2','MSCC4'}, 'Location','best');
-
-ax = gca;
-ax.XColor = 'k';
-ax.YColor = 'k';
-
-apply_fig_style();
-
-% ---- 같이 그리는 그래프: Lithium plating capacity → (b) -----------------
-put_subfigure_label_outside(fPall, '(b)', subLabelFS);
-
-out_Pall = fullfile(fig_out_dir, 'timeseries_platingcap_allProtocols.png');
-export_png(fPall, out_Pall);
-fprintf('Saved: %s\n', out_Pall);
-
-%% 5.4) Voltage & Current vs time — 프로토콜별 개별 플롯 -------------------
-for k = 1:numel(PROT)
-    P = PROT(k);
-    R = P.R;
-
-    fV = figure(4200+k); clf;
-    set(gcf,'Color','w'); grid off; hold on;
+    % 1) V, I vs time
+    f1 = figure; set(gcf,'Color','w'); hold on; grid off;
 
     yyaxis left;
-    plot(R.t, R.E, '-',  'LineWidth',2.0, 'Color',colV);
+    plot(R.t, R.E, '-', 'LineWidth',2.0, 'Color', colV);
     ylabel('E_{cell} (V)');
 
     yyaxis right;
-    plot(R.t, R.I, '-', 'LineWidth',2.0, 'Color',colI);
+    plot(R.t, R.I, '-', 'LineWidth',2.0, 'Color', colI);
     ylabel('I_{cell} (A)');
 
     xlabel('t (s)');
     legend({'E_{cell}','I_{cell}'}, 'Location','best');
 
     ax = gca;
-    ax.XColor         = 'k';
+    ax.XColor        = 'k';
     ax.YAxis(1).Color = 'k';
     ax.YAxis(2).Color = 'k';
 
     apply_fig_style();
+    out_png = fullfile(fig_out_dir, sprintf('case%02d_voltage_current.png', k));
+    export_png(f1, out_png);
 
-    % ---- 프로토콜별 개별 플롯 레이블: CCCV(a), MSCC2(b), MSCC4(c) --------
-    lbl = labelMapProt(P.name);
-    put_subfigure_label_outside(fV, lbl, subLabelFS);
-
-    out_png = fullfile(fig_out_dir, ...
-        sprintf('timeseries_voltage_current_%s.png', P.name));
-    export_png(fV, out_png);
-end
-
-%% 5.5) Temperature vs time — 프로토콜별 개별 플롯 -------------------------
-for k = 1:numel(PROT)
-    P = PROT(k);
-    R = P.R;
+   % 2) Temperature vs time (T_avg, T_min)
+    f2 = figure; set(gcf,'Color','w'); hold on; grid off;
 
     TavgC = R.Tavg - 273.15;
     TminC = R.Tmin - 273.15;
 
-    fT = figure(4300+k); clf;
-    set(gcf,'Color','w'); grid off; hold on;
-
-    % T_avg, T_min 모두 실선
-    plot(R.t, TavgC, '-', 'LineWidth',2.0, 'Color',colTmax); % 빨강
-    plot(R.t, TminC, '-', 'LineWidth',2.0, 'Color',colTavg); % 파랑
+    plot(R.t, TavgC, '-', 'LineWidth',2.0, 'Color', colTmax); % T_avg = red
+    plot(R.t, TminC, '-', 'LineWidth',2.0, 'Color', colTavg); % T_min = blue
 
     xlabel('t (s)');
     ylabel('Temperature (°C)');
@@ -308,173 +430,395 @@ for k = 1:numel(PROT)
     ax.YColor = 'k';
 
     apply_fig_style();
+    out_png = fullfile(fig_out_dir, sprintf('case%02d_temperature.png', k));
+    export_png(f2, out_png);
 
-    % ---- 프로토콜별 개별 플롯 레이블 --------------------------------------
-    lbl = labelMapProt(P.name);
-    put_subfigure_label_outside(fT, lbl, subLabelFS);
+    % 3) Anode potential vs time
+    f3 = figure; set(gcf,'Color','w'); hold on; grid off;
 
-    out_png = fullfile(fig_out_dir, ...
-        sprintf('timeseries_temperature_%s.png', P.name));
-    export_png(fT, out_png);
-end
-
-%% 5.6) Anode potential vs time — 프로토콜별 개별 플롯 ----------------------
-for k = 1:numel(PROT)
-    P = PROT(k);
-    R = P.R;
-
-    fA = figure(4400+k); clf;
-    set(gcf,'Color','w'); grid off; hold on;
-
-    plot(R.t, R.vdiff, 'LineWidth',2.0, 'Color',colAn);
+    plot(R.t, R.vdiff, 'LineWidth',2.0, 'Color', colAn);
 
     xlabel('t (s)');
     ylabel('Anode potential (V)');
-    legend({P.name}, 'Location','best');
+    legend({'Anode potential'}, 'Location','best');
 
     ax = gca;
     ax.XColor = 'k';
     ax.YColor = 'k';
 
     apply_fig_style();
+    out_png = fullfile(fig_out_dir, sprintf('case%02d_anode_potential.png', k));
+    export_png(f3, out_png);
 
-    % ---- 프로토콜별 개별 플롯 레이블 --------------------------------------
-    lbl = labelMapProt(P.name);
-    put_subfigure_label_outside(fA, lbl, subLabelFS);
+    % 4) Plating capacity vs time
+    f4 = figure; set(gcf,'Color','w'); hold on; grid off;
 
-    out_png = fullfile(fig_out_dir, ...
-        sprintf('timeseries_anode_potential_%s.png', P.name));
-    export_png(fA, out_png);
-end
-
-%% 5.7) Thermal load metrics — ∫ΔT dt, ∫Qh dt per protocol -----------------
-nP     = numel(PROT);
-names  = {PROT.name};
-colors = [colCCCV; colMSCC2; colMSCC4];
-
-J_T = zeros(nP,1); % ∫ΔT dt
-J_Q = zeros(nP,1); % ∫Qh dt
-
-for k = 1:nP
-    R      = PROT(k).R;
-    t      = R.t(:);
-    Tavg   = R.Tavg(:);
-    Qh     = R.Qh(:);
-    T_init = Tavg(1);
-
-    dT     = Tavg - T_init;
-    J_T(k) = trapz(t, dT);
-    J_Q(k) = trapz(t, Qh);
-end
-
-% --- (1) ∫ΔT dt bar plot --------------------------------------------------
-fDT = figure(4501); clf;
-set(gcf,'Color','w');
-
-b1 = bar(J_T);
-b1.FaceColor = 'flat';
-for k = 1:nP
-    b1.CData(k,:) = colors(k,:);
-end
-grid off;
-xticks(1:nP);
-xticklabels(names);
-xlabel('Protocol');
-ylabel('\int \DeltaT_{avg}(t)\, dt (°C·s)');
-
-apply_fig_style();
-out_DT = fullfile(fig_out_dir, 'thermal_JT_integral_deltaTavg.png');
-export_png(fDT, out_DT);
-fprintf('Saved: %s\n', out_DT);
-
-% --- (2) ∫Qh dt bar plot --------------------------------------------------
-fQh = figure(4502); clf;
-set(gcf,'Color','w');
-
-b2 = bar(J_Q);
-b2.FaceColor = 'flat';
-for k = 1:nP
-    b2.CData(k,:) = colors(k,:);
-end
-grid off;
-xticks(1:nP);
-xticklabels(names);
-xlabel('Protocol');
-ylabel('\int Q_h(t)\, dt (J/m^3)');
-
-apply_fig_style();
-out_Qh = fullfile(fig_out_dir, 'thermal_JQ_integral_Qh.png');
-export_png(fQh, out_Qh);
-fprintf('Saved: %s\n', out_Qh);
-
-%% 5.8) plating_cap vs time — 프로토콜별 개별 플롯 --------------------------
-for k = 1:numel(PROT)
-    P = PROT(k);
-    R = P.R;
-
-    fP = figure(4600+k); clf;
-    set(gcf,'Color','w'); grid off; hold on;
-
-    plot(R.t, R.pc, 'LineWidth',2.0, 'Color',colPc);
+    plot(R.t, R.pc, 'LineWidth',2.0, 'Color', colPc);
 
     xlabel('t (s)');
     ylabel('plating\_cap (Ah/m^2)');
-    legend({P.name}, 'Location','best');
+    legend({'plating\_cap'}, 'Location','best');
 
     ax = gca;
     ax.XColor = 'k';
     ax.YColor = 'k';
 
     apply_fig_style();
-
-    % ---- 프로토콜별 개별 플롯 레이블 --------------------------------------
-    lbl = labelMapProt(P.name);
-    put_subfigure_label_outside(fP, lbl, subLabelFS);
-
-    out_png = fullfile(fig_out_dir, ...
-        sprintf('timeseries_platingcap_%s.png', P.name));
-    export_png(fP, out_png);
+    out_png = fullfile(fig_out_dir, sprintf('case%02d_platingcap.png', k));
+    export_png(f4, out_png);
 end
 
-%% 5.10) Charge time comparison — CCCV vs MSCC2 vs MSCC4 (from simulation)
-times  = [R_cccv.t(end); ...
-          R_mscc2.t(end); ...
-          R_mscc4.t(end)];
-labels = {'CCCV','MSCC2','MSCC4'};
+%% =========================================================================
+% 5-A-Extra) Stage별 baseline vs best1 / worst1 비교 플롯
+% =========================================================================
 
-% 프로토콜 고정 팔레트 색상
-bar_colors = [colCCCV; colMSCC2; colMSCC4];
+fprintf('\n[FIG] Baseline vs Best1/Worst1 comparison plots 생성 중...\n');
 
-fTcmp = figure(4800); clf;
-set(gcf,'Color','w');
+unique_stage = unique([Rcase.stage]);
 
-b = bar(times);
-b.FaceColor = 'flat';
-for i = 1:numel(times)
-    b.CData(i,:) = bar_colors(i,:);
-end
-grid off;
-xticks(1:3);
-xticklabels(labels);
-xlabel('Protocol');
-ylabel('Charge time (s)');
+for s = unique_stage
 
-ax = gca;
-ax.XColor = 'k';
-ax.YColor = 'k';
+    % --- 해당 stage의 케이스 전체 모으기 ---
+    idx_s = find([Rcase.stage] == s);
+    Rs    = Rcase(idx_s);
+    kinds = string({Rs.kind});
+    dpl   = [Rs.dplat];
 
-apply_fig_style();
-out_cmp = fullfile(fig_out_dir, 'charge_time_comparison_fromSim.png');
-export_png(fTcmp, out_cmp);
-fprintf('Saved: %s\n', out_cmp);
+    % ---------------- Best1 찾기 ----------------
+    best_idx_raw = find(kinds == "best");
+    if isempty(best_idx_raw)
+        fprintf('Stage %d: best 없음 → 스킵\n', s);
+        continue;
+    end
+
+    [~, loc_min]   = min(dpl(best_idx_raw));
+    best1_localIdx = best_idx_raw(loc_min);
+    Rb1            = Rs(best1_localIdx);
+
+    % baseline: pulse OFF MSCC4
+    R0 = R_base;
+
+    %% 1) V / I 비교 (Baseline vs Best1)
+    f1 = figure; set(gcf,'Color','w'); hold on; grid off;
+
+    % 색 정의
+    colV_base = colGrey;          % Baseline V
+    colV_best = colV;             % Best  V (노랑)
+    colI_base = [0.3 0.3 0.3];    % Baseline I (짙은 회색)
+    colI_best = colI;             % Best  I (시안)
+
+    yyaxis left;
+    plot(R0.t,  R0.E,  '--', 'LineWidth',2.0, 'Color', colV_base);
+    plot(Rb1.t, Rb1.E, '-',  'LineWidth',2.0, 'Color', colV_best);
+    ylabel('E_{cell} (V)');
+
+    yyaxis right;
+    plot(R0.t,  R0.I,  '--', 'LineWidth',2.0, 'Color', colI_base);
+    plot(Rb1.t, Rb1.I, '-',  'LineWidth',2.0, 'Color', colI_best);
+    ylabel('I_{cell} (A)');
+
+    xlabel('t (s)');
+    legend({'Baseline V','Best1 V','Baseline I','Best1 I'}, ...
+           'Location','best');
+
+    ax = gca;
+    ax.XColor         = 'k';
+    ax.YAxis(1).Color = 'k';
+    ax.YAxis(2).Color = 'k';
+
+    apply_fig_style();
+    export_png(f1, fullfile(fig_out_dir, ...
+        sprintf('stage%d_baseline_vs_best1_VI.png', s)));
+
+    %% 2) Temperature (T_{avg} & T_{min}) - Baseline vs Best1
+    f2 = figure; set(gcf,'Color','w'); hold on; grid off;
+
+    % Baseline [°C]
+    Tavg0 = R0.Tavg - 273.15;
+    Tmin0 = R0.Tmin - 273.15;
+
+    % Best1 [°C]
+    Tavg1 = Rb1.Tavg - 273.15;
+    Tmin1 = Rb1.Tmin - 273.15;
+
+    % 색 정의
+    colTavg_best = colTmax;             % Best T_avg = 빨강
+    colTmin_best = colTavg;             % Best T_min = 파랑
+
+    colTavg_base = [0.8 0.4 0.4];       % Baseline T_avg = 연한 빨강
+    colTmin_base = [0.4 0.6 0.9];       % Baseline T_min = 연한 파랑
+
+    % Baseline 먼저
+    plot(R0.t,  Tavg0, '--', 'LineWidth',2.0, 'Color', colTavg_base);
+    plot(R0.t,  Tmin0, '--', 'LineWidth',2.0, 'Color', colTmin_base);
+
+    % Best1
+    plot(Rb1.t, Tavg1, '-', 'LineWidth',2.0, 'Color', colTavg_best);
+    plot(Rb1.t, Tmin1, '-', 'LineWidth',2.0, 'Color', colTmin_best);
+
+    xlabel('t (s)');
+    ylabel('Temperature (°C)');
+    legend({'Baseline T_{avg}','Baseline T_{min}', ...
+            'Best1 T_{avg}','Best1 T_{min}'}, ...
+            'Location','best');
+
+    ax = gca;
+    ax.XColor = 'k';
+    ax.YColor = 'k';
+
+    apply_fig_style();
+    export_png(f2, fullfile(fig_out_dir, ...
+        sprintf('stage%d_baseline_vs_best1_T_all.png', s)));
+
+    %% 3) Anode potential - Baseline vs Best1
+    f3 = figure; set(gcf,'Color','w'); hold on; grid off;
+
+    colAn_base = colGrey;   % Baseline: 회색
+    colAn_best = colAn;     % Best1   : 보라색
+
+    plot(R0.t,  R0.vdiff, '-', 'Color', colAn_base, 'LineWidth',2.0);
+    plot(Rb1.t, Rb1.vdiff,'-', 'Color', colAn_best, 'LineWidth',2.0);
+
+    xlabel('t (s)');
+    ylabel('Anode potential (V)');
+    legend({'Baseline','Best1'}, 'Location','bestoutside');
+
+    ax = gca;
+    ax.XColor = 'k';
+    ax.YColor = 'k';
+
+    apply_fig_style();
+    export_png(f3, fullfile(fig_out_dir, ...
+        sprintf('stage%d_baseline_vs_best1_anode.png', s)));
+
+    %% 4) Plating capacity - Baseline vs Best1
+    f4 = figure; set(gcf,'Color','w'); hold on; grid off;
+
+    colPc_base = colGrey;   % Baseline: 회색
+    colPc_best = colPc;     % Best1   : 초록
+
+    plot(R0.t,  R0.pc, '-', 'Color', colPc_base, 'LineWidth',2.0);
+    plot(Rb1.t, Rb1.pc,'-', 'Color', colPc_best, 'LineWidth',2.0);
+
+    xlabel('t (s)');
+    ylabel('plating\_cap (Ah/m^2)');
+    legend({'Baseline','Best1'}, 'Location','best');
+
+    ax = gca;
+    ax.XColor = 'k';
+    ax.YColor = 'k';
+
+    apply_fig_style();
+    export_png(f4, fullfile(fig_out_dir, ...
+        sprintf('stage%d_baseline_vs_best1_plating.png', s)));
+
+    % ===== Charge time bar plot: Baseline vs Best1 =======================
+    t_base  = R0.t(end);   % baseline charge time [s]
+    t_best1 = Rb1.t(end);  % best1 charge time [s]
+
+    fBarBest = figure; set(gcf,'Color','w'); hold on; grid off;
+
+    vals = [t_base; t_best1];
+    b = bar(vals);
+    b.FaceColor = 'flat';
+    b.CData(1,:) = colGrey; % Baseline = 회색
+    b.CData(2,:) = colTmax; % Best1    = 팔레트 빨강
+
+    xticks(1:2);
+    xticklabels({'Baseline','Best1'});
+    xlabel('Protocol');
+    ylabel('Charge time (s)');
+
+    apply_fig_style();
+    export_png(fBarBest, fullfile(fig_out_dir, ...
+        sprintf('stage%d_charge_time_baseline_vs_best1.png', s)));
+
+    %% ---------------- Worst1 찾기 (같은 stage 내) ----------------
+    worst_idx_raw = find(kinds == "worst");
+    if isempty(worst_idx_raw)
+        fprintf('Stage %d: worst 없음 → worst plot 스킵\n', s);
+        continue;
+    end
+
+    [~, loc_max]    = max(dpl(worst_idx_raw));
+    worst1_localIdx = worst_idx_raw(loc_max);
+    Rw1             = Rs(worst1_localIdx);
+
+    %% 5) V / I 비교 (Baseline vs Worst1)
+    f1w = figure; set(gcf,'Color','w'); hold on; grid off;
+
+    colV_w1   = colV;     % worst1도 같은 팔레트 사용
+    colI_w1   = colI;
+
+    yyaxis left;
+    plot(R0.t,  R0.E,  '--', 'LineWidth',2.0, 'Color', colV_base);
+    plot(Rw1.t, Rw1.E, '-',  'LineWidth',2.0, 'Color', colV_w1);
+    ylabel('E_{cell} (V)');
+
+    yyaxis right;
+    plot(R0.t,  R0.I,  '--', 'LineWidth',2.0, 'Color', colI_base);
+    plot(Rw1.t, Rw1.I, '-',  'LineWidth',2.0, 'Color', colI_w1);
+    ylabel('I_{cell} (A)');
+
+    xlabel('t (s)');
+    legend({'Baseline V','Worst1 V','Baseline I','Worst1 I'}, ...
+           'Location','best');
+
+    ax = gca;
+    ax.XColor         = 'k';
+    ax.YAxis(1).Color = 'k';
+    ax.YAxis(2).Color = 'k';
+
+    apply_fig_style();
+    export_png(f1w, fullfile(fig_out_dir, ...
+        sprintf('stage%d_baseline_vs_worst1_VI.png', s)));
+
+    %% 6) Temperature (Tavg, Tmin) - Baseline vs Worst1
+    f2w = figure; set(gcf,'Color','w'); hold on; grid off;
+
+    Tavg1w = Rw1.Tavg - 273.15;
+    Tmin1w = Rw1.Tmin - 273.15;
+
+    plot(R0.t,  Tavg0, '--', 'LineWidth',2.0, 'Color', colTavg_base);
+    plot(R0.t,  Tmin0, '--', 'LineWidth',2.0, 'Color', colTmin_base);
+
+    plot(Rw1.t, Tavg1w, '-', 'LineWidth',2.0, 'Color', colTavg_best);
+    plot(Rw1.t, Tmin1w, '-', 'LineWidth',2.0, 'Color', colTmin_best);
+
+    xlabel('t (s)');
+    ylabel('Temperature (°C)');
+    legend({'Baseline T_{avg}','Baseline T_{min}', ...
+            'Worst1 T_{avg}','Worst1 T_{min}'}, ...
+            'Location','best');
+
+    apply_fig_style();
+    export_png(f2w, fullfile(fig_out_dir, ...
+        sprintf('stage%d_baseline_vs_worst1_T_all.png', s)));
+
+    %% 7) Anode potential - Baseline vs Worst1
+    f3w = figure; set(gcf,'Color','w'); hold on; grid off;
+
+    plot(R0.t,  R0.vdiff, '--', 'Color', colAn_base, 'LineWidth',2.0);
+    plot(Rw1.t, Rw1.vdiff,'-',  'Color', colAn_best, 'LineWidth',2.0);
+
+    xlabel('t (s)');
+    ylabel('Anode potential (V)');
+    legend({'Baseline','Worst1'}, 'Location','best');
+
+    apply_fig_style();
+    export_png(f3w, fullfile(fig_out_dir, ...
+        sprintf('stage%d_baseline_vs_worst1_anode.png', s)));
+
+    %% 8) Plating capacity - Baseline vs Worst1
+    f4w = figure; set(gcf,'Color','w'); hold on; grid off;
+
+    plot(R0.t,  R0.pc, '--', 'Color', colPc_base, 'LineWidth',2.0);
+    plot(Rw1.t, Rw1.pc,'-',  'Color', colPc_best, 'LineWidth',2.0);
+
+    xlabel('t (s)');
+    ylabel('plating\_cap (Ah/m^2)');
+    legend({'Baseline','Worst1'}, 'Location','best');
+
+    apply_fig_style();
+    export_png(f4w, fullfile(fig_out_dir, ...
+        sprintf('stage%d_baseline_vs_worst1_plating.png', s)));
+
+    % ===== Charge time bar plot: Baseline vs Worst1 =====================
+    t_base   = R0.t(end);   % baseline charge time [s]
+    t_worst1 = Rw1.t(end);  % worst1 charge time [s]
+
+    fBarWorst = figure; set(gcf,'Color','w'); hold on; grid off;
+
+    vals = [t_base; t_worst1];
+    b = bar(vals);
+    b.FaceColor = 'flat';
+    b.CData(1,:) = colGrey; % Baseline = 회색
+    b.CData(2,:) = colTavg; % Worst1   = 팔레트 파랑
+
+    xticks(1:2);
+    xticklabels({'Baseline','Worst1'});
+    xlabel('Protocol');
+    ylabel('Charge time (s)');
+
+    apply_fig_style();
+    export_png(fBarWorst, fullfile(fig_out_dir, ...
+        sprintf('stage%d_charge_time_baseline_vs_worst1.png', s)));
+
+end  % for s = unique_stage
+
 
 %% ======================= Local helper functions ==========================
-function fpath = pick_one_file(folder, pattern)
-    L = dir(fullfile(folder, pattern));
-    assert(~isempty(L), '파일이 없습니다: %s', fullfile(folder, pattern));
-    [~,ix] = max([L.datenum]);
-    fpath  = fullfile(L(ix).folder, L(ix).name);
+
+function R = run_pulse_case(model, stage_mode, duty, Tper, Irest, ...
+                            t_cycling, dt_out, studyTag, dset)
+
+    % ----- 파라미터 세팅 -----
+    model.param.set('pulse_stage_mode', num2str(stage_mode));
+    model.param.set('duty_cycle',       num2str(duty));
+    model.param.set('pulse_freq',       num2str(Tper));   % 모델에서 쓰는 이름 확인 필요
+
+    % rest current 계수 직접 세팅 (CSV의 Irest 값을 coeff로 사용)
+    model.param.set('pulse_rest_current_param_coeffi', num2str(Irest));
+    % 필요하면 구버전 호환:
+    % model.param.set('I_rest', num2str(Irest));
+
+    model.param.set('t_cycling', num2str(t_cycling));
+
+    tlist_str = sprintf('range(0,%g,t_cycling)', dt_out);
+    set_tlist_safe(model, studyTag, tlist_str);
+
+    % ----- 실행 -----
+    model.study(studyTag).run();
+
+    % ----- 데이터 읽기 -----
+    % d1=t, d2=E, d3=I, d4=Ect, d5=T_avg, d6=T_max, d7=T_min,
+    % d8=Qh, d9=plating_cap, d10=CC_CH, d11=CV_CH
+    expr = {'t', ...
+            'E_cell', ...
+            'liion.cdc1.Icell', ...
+            'liion.Ect', ...
+            'T_avg', ...
+            'T_max', ...
+            'T_min', ...
+            'liion.Qh', ...
+            'plating_cap', ...
+            'liion.cdc1.CC_CH', ...
+            'liion.cdc1.CV_CH'};
+
+    D = mpheval(model, expr, 'dataset', dset, 'edim', 'point', ...
+                'selection', 2, 'solnum', 'all');
+
+    t    = D.d1;
+    E    = D.d2;
+    I    = D.d3;
+    v    = D.d4;
+    Tavg = toCol(D,5);
+    Tmax = toCol(D,6);
+    Tmin = toCol(D,7);
+    Qh   = toCol(D,8);
+    pc   = toCol(D,9);
+    cc   = toCol(D,10);   % CC indicator
+    cv   = toCol(D,11);   % CV indicator
+
+    % ---- MSCC 스크립트와 동일: CC 또는 CV 구간만 사용 ----
+    idx = (cc == 1) | (cv == 1);
+    if ~any(idx)
+        % 혹시라도 CC/CV 플래그가 없으면 전체 사용
+        idx = true(size(t));
+    end
+
+    R = struct('t',    t(idx), ...
+               'E',    E(idx), ...
+               'I',    I(idx), ...
+               'vdiff',v(idx), ...
+               'Tavg', Tavg(idx), ...
+               'Tmax', Tmax(idx), ...
+               'Tmin', Tmin(idx), ...
+               'Qh',   Qh(idx), ...
+               'pc',   pc(idx), ...
+               'label',"", 'stage',[], 'kind',"", 'dplat',[]);
 end
+
 
 function export_png(fig_handle, outpath)
     try
@@ -489,85 +833,6 @@ function export_png(fig_handle, outpath)
     end
 end
 
-function R = run_and_eval(protocol, model, Cvals, t_cycling)
-    dt_out = 10; % [s]
-
-    switch protocol
-        case 'CCCV'
-            model.param.set('C_rate', num2str(Cvals(1)));
-            studyTag = 'std1';
-            dset     = 'dset1';
-
-        case 'MSCC2' % [C12 C3456]
-            C12   = Cvals(1);
-            C3456 = Cvals(2);
-            model.param.set('first_MSCC_Crate',  num2str(C12));
-            model.param.set('second_MSCC_Crate', num2str(C12));
-            model.param.set('third_MSCC_Crate',  num2str(C3456));
-            model.param.set('fourth_MSCC_Crate', num2str(C3456));
-            model.param.set('fifth_MSCC_Crate',  num2str(C3456));
-            model.param.set('sixth_MSCC_Crate',  num2str(C3456));
-            studyTag = 'std2';
-            dset     = 'dset3';
-
-        case 'MSCC4' % [C1 C2 C34 C56]
-            C1  = Cvals(1);
-            C2  = Cvals(2);
-            C34 = Cvals(3);
-            C56 = Cvals(4);
-            model.param.set('first_MSCC_Crate',  num2str(C1));
-            model.param.set('second_MSCC_Crate', num2str(C2));
-            model.param.set('third_MSCC_Crate',  num2str(C34));
-            model.param.set('fourth_MSCC_Crate', num2str(C34));
-            model.param.set('fifth_MSCC_Crate',  num2str(C56));
-            model.param.set('sixth_MSCC_Crate',  num2str(C56));
-            model.param.set('pulse_stage_mode',  '0');
-            studyTag = 'std2';
-            dset     = 'dset3';
-
-        otherwise
-            error('Unknown protocol');
-    end
-
-    model.param.set('t_cycling', num2str(t_cycling));
-    tlist_str = sprintf('range(0,%g,t_cycling)', dt_out);
-    set_tlist_safe(model, studyTag, tlist_str);
-
-    model.study(studyTag).run();
-
-    expr = {'t','E_cell','liion.cdc1.Icell','liion.Ect','T_avg','T_min', ...
-            'liion.cdc1.CC_CH','liion.cdc1.CV_CH', ...
-            'liion.Qh','plating_cap'};
-
-    D = mpheval(model, expr, 'dataset',dset,'edim','point','selection',2,'solnum','all');
-
-    t = D.d1;
-    E = D.d2;
-    I = D.d3;
-    v = D.d4;
-    Ta = toCol(D,5); % T_avg
-    Tn = toCol(D,6); % T_min
-    cc = D.d7;
-    cv = D.d8;
-    Qh = toCol(D,9);
-    pc = toCol(D,10);
-
-    idx = (cc==1) | (cv==1);
-    if ~any(idx), idx = true(size(t)); end
-
-    R = struct('t',t(idx),'E',E(idx),'I',I(idx), ...
-               'vdiff',v(idx),'Tavg',Ta(idx),'Tmin',Tn(idx), ...
-               'Qh',Qh(idx),'pc',pc(idx));
-end
-
-function col = toCol(D, k)
-    try
-        col = D.(['d' num2str(k)]);
-    catch
-        col = nan(size(D.d1));
-    end
-end
-
 function set_tlist_safe(model, studyTag, tlist_str)
     tried = false;
     for cand = {'time','time1','time2','step1','step2'}
@@ -578,7 +843,6 @@ function set_tlist_safe(model, studyTag, tlist_str)
         catch
         end
     end
-
     for solCand = {'sol1','sol2'}
         for featCand = {'t1','t2','time','time1'}
             try
@@ -587,9 +851,16 @@ function set_tlist_safe(model, studyTag, tlist_str)
             end
         end
     end
-
     if ~tried
         warning('tlist 설정 실패: study=%s (기본 설정으로 계속 진행)', studyTag);
+    end
+end
+
+function col = toCol(D, k)
+    try
+        col = D.(['d' num2str(k)]);
+    catch
+        col = nan(size(D.d1));
     end
 end
 
@@ -597,25 +868,22 @@ function apply_fig_style()
     % 공통 figure 스타일: tick / label / legend 폰트 + title 제거 + BOX ON
     ax = gca;
 
-    % ---- 폰트 사이즈 ----
-    tickFS   = 24;   % 기존 16 → 24
-    labelFS  = 26;   % 기존 18 → 26
-    legendFS = 24;   % 기존 16 → 24
+    tickFS   = 24;
+    labelFS  = 26;
+    legendFS = 24;
 
     % Tick
     set(ax, 'FontSize', tickFS);
 
-    % X label
+    % X/Y/Z label
     if ~isempty(ax.XLabel) && ~isempty(ax.XLabel.String)
         ax.XLabel.FontSize = labelFS;
     end
-
-    % Y labels (yyaxis 대응)
-    if numel(ax.YAxis) >= 1 && ~isempty(ax.YAxis(1).Label.String)
-        ax.YAxis(1).Label.FontSize = labelFS;
+    if ~isempty(ax.YLabel) && ~isempty(ax.YLabel.String)
+        ax.YLabel.FontSize = labelFS;
     end
-    if numel(ax.YAxis) >= 2 && ~isempty(ax.YAxis(2).Label.String)
-        ax.YAxis(2).Label.FontSize = labelFS;
+    if ~isempty(ax.ZLabel) && ~isempty(ax.ZLabel.String)
+        ax.ZLabel.FontSize = labelFS;
     end
 
     % Legend
@@ -630,18 +898,6 @@ function apply_fig_style()
         ax.Title.String = '';
     end
 
-    % ---- 사각형 네 줄 모두 표시 ----
+    % 4면 테두리
     box(ax, 'on');
-end
-
-function put_subfigure_label_outside(fig_handle, label, subLabelFS)
-    % figure 전체 좌표계 기준으로 왼쪽 위에 (a), (b), (c) 등 표시
-    figure(fig_handle);
-    annotation('textbox', [0.01 0.93 0.1 0.05], ...
-        'String', label, ...
-        'FontSize', subLabelFS, ...
-        'FontWeight', 'bold', ...
-        'EdgeColor', 'none', ...
-        'VerticalAlignment','top', ...
-        'HorizontalAlignment','left');
 end
