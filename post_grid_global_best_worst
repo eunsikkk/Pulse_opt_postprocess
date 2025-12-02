@@ -52,7 +52,9 @@ end
 % stage_mode 1~7만 사용 (0 = baseline 제외)
 %stage_list = setdiff(unique(stage_all), 0);
 
-stage_list = 3;
+% 방법 A: 세미콜론 사용 (세로로 쌓기)
+stage_list = [1; 2; 3]; 
+
 fprintf('\n총 stage_mode (0 제외): '); disp(stage_list');
 
 %% Irest 선택 (지금은 Irest=0만 사용)
